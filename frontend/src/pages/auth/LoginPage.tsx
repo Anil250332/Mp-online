@@ -39,119 +39,134 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden">
-      {/* Background glowing effects */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-10 right-10 w-[300px] h-[300px] bg-emerald-600/10 rounded-full blur-[100px] pointer-events-none" />
-
-      <div className="sm:mx-auto sm:w-full sm:max-w-md z-10">
-        <div className="flex justify-center items-center gap-3">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-tr from-indigo-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-indigo-500/25">
-            <ShieldCheck className="h-7 w-7 text-white" />
+    <div className="min-h-screen bg-[#f4f7fb] flex flex-col justify-between font-sans">
+      {/* Top Header Bar */}
+      <header className="bg-[#1d4ed8] text-white shadow-md px-4 sm:px-8 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-amber-400 to-orange-500 flex items-center justify-center shadow-inner border border-white/20">
+            <span className="text-xs font-black text-blue-950">V2</span>
           </div>
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-white">V2ONLINE</h1>
-            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Fast Track Citizen Services</p>
+            <span className="text-base font-black tracking-tight text-white uppercase">CITIZEN CENTER</span>
+            <p className="text-[10px] font-bold text-amber-300 tracking-widest uppercase -mt-0.5">ONLINE PORTAL</p>
           </div>
         </div>
-        <h2 className="mt-6 text-center text-xl font-bold tracking-tight text-slate-100">
-          Portal Login
-        </h2>
-        <p className="mt-1 text-center text-xs text-slate-400">
-          Super Admin • Manager • Distributor • Operator • MP Online Agent
-        </p>
-      </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 px-4 sm:px-0">
-        <div className="bg-slate-900/90 backdrop-blur-xl py-8 px-6 shadow-2xl rounded-2xl border border-slate-800 sm:px-10">
-          {errorMessage && (
-            <div className="mb-6 rounded-lg bg-red-950/60 border border-red-800/80 p-3.5 flex items-start gap-3 text-red-300 text-xs">
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+        <Link
+          to="/register"
+          className="text-xs font-bold bg-white/15 hover:bg-white/25 px-3.5 py-1.5 rounded-lg border border-white/20 text-white transition-colors"
+        >
+          New Registration (Agent / Operator)
+        </Link>
+      </header>
 
-          <form className="space-y-5" onSubmit={handleLogin}>
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                Mobile Number
-              </label>
-              <div className="mt-1 relative rounded-lg shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Phone className="h-4 w-4 text-slate-500" />
-                </div>
-                <input
-                  type="tel"
-                  maxLength={10}
-                  placeholder="10-digit mobile number"
-                  value={mobile}
-                  onChange={(e) => setMobile(e.target.value.replace(/\D/g, ''))}
-                  className="block w-full pl-10 pr-3 py-2.5 bg-slate-800/80 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
-                  required
-                />
+      {/* Main Login Card */}
+      <div className="flex-1 flex flex-col justify-center py-10 sm:px-6 lg:px-8">
+        <div className="sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
+          <div className="bg-white py-8 px-6 shadow-xl rounded-2xl border border-slate-200 sm:px-10">
+            <div className="text-center mb-6">
+              <div className="h-12 w-12 bg-blue-50 border border-blue-200 text-blue-700 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-sm">
+                <ShieldCheck className="h-7 w-7" />
               </div>
+              <h2 className="text-xl font-bold text-slate-900">Sign In to Your Account</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Super Admin • Manager • Distributor • Operator • MP Online Retailer
+              </p>
             </div>
 
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                  Password
+            {errorMessage && (
+              <div className="mb-5 rounded-xl bg-red-50 border border-red-200 p-3.5 flex items-start gap-2.5 text-red-700 text-xs">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-500 mt-0.5" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            <form className="space-y-4" onSubmit={handleLogin}>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Mobile Number
                 </label>
-                <Link to="/forgot-password" className="text-xs font-medium text-indigo-400 hover:text-indigo-300">
-                  Forgot password?
-                </Link>
-              </div>
-              <div className="mt-1 relative rounded-lg shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-4 w-4 text-slate-500" />
+                <div className="relative rounded-lg shadow-sm">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Phone className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <input
+                    type="tel"
+                    maxLength={10}
+                    placeholder="10-digit mobile number"
+                    value={mobile}
+                    onChange={(e) => setMobile(e.target.value.replace(/\D/g, ''))}
+                    className="block w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:bg-white transition-colors"
+                    required
+                  />
                 </div>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full pl-10 pr-10 py-2.5 bg-slate-800/80 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
-                  required
-                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Password
+                  </label>
+                  <Link to="/forgot-password" className="text-xs font-semibold text-blue-600 hover:text-blue-700">
+                    Forgot password?
+                  </Link>
+                </div>
+                <div className="relative rounded-lg shadow-sm">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="block w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:bg-white transition-colors"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2">
                 <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-200"
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-md text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-all"
                 >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {isLoading ? (
+                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
+                  ) : (
+                    <>
+                      <span>Secure Sign In</span>
+                      <ArrowRight className="h-4 w-4" />
+                    </>
+                  )}
                 </button>
               </div>
-            </div>
+            </form>
 
-            <div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 transition-all"
-              >
-                {isLoading ? (
-                  <div className="h-5 w-5 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                ) : (
-                  <>
-                    <span>Secure Sign In</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </button>
+            <div className="mt-6 pt-5 border-t border-slate-100 text-center">
+              <p className="text-xs text-slate-600">
+                Naye Retailer ya Operator hain?{' '}
+                <Link to="/register" className="font-bold text-blue-600 hover:text-blue-700">
+                  Self Register Karein (OTP)
+                </Link>
+              </p>
             </div>
-          </form>
-
-          {/* Quick Registration Redirect */}
-          <div className="mt-6 pt-6 border-t border-slate-800 text-center">
-            <p className="text-xs text-slate-400">
-              Nayi MP Online Shop ya Operator hain?{' '}
-              <Link to="/register" className="font-semibold text-emerald-400 hover:text-emerald-300">
-                Self Register Karein (OTP)
-              </Link>
-            </p>
           </div>
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="py-3 text-center text-[11px] text-slate-500 border-t border-slate-200">
+        © 2026 V2Online Citizen Center Portal • Fast Track Government Services Platform
+      </footer>
     </div>
   );
 };

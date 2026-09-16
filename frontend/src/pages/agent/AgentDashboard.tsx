@@ -1,140 +1,281 @@
-import React from 'react';
+import React, { useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../context/AuthContext';
 import {
+  Wallet,
+  CreditCard,
   FileText,
-  Clock,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  IdCard,
+  Car,
+  ShoppingBag,
+  CheckSquare,
+  Tractor,
+  Layers,
   Award,
-  Plus
+  HeartPulse,
+  Landmark,
+  BookOpen,
+  Building2,
+  BadgeCheck,
+  ShieldCheck,
+  Zap
 } from 'lucide-react';
 
 export const AgentDashboard: React.FC = () => {
+  const { user } = useAuth();
+  const [selectedService, setSelectedService] = useState<string | null>(null);
+
+  const services = [
+    {
+      id: 'wallet',
+      title: 'Add Wallet',
+      iconEmoji: '👛',
+      color: 'text-red-500',
+      bgColor: 'bg-red-50',
+      icon: Wallet
+    },
+    {
+      id: 'aadhaar',
+      title: 'Aadhaar Services',
+      iconEmoji: '🪪',
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-50',
+      icon: CreditCard
+    },
+    {
+      id: 'pan',
+      title: 'Pan Card Services',
+      iconEmoji: '💳',
+      color: 'text-amber-600',
+      bgColor: 'bg-amber-50',
+      icon: CreditCard
+    },
+    {
+      id: 'driving',
+      title: 'LL / DL / Vehical Services',
+      iconEmoji: '🏍️',
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50',
+      icon: Car
+    },
+    {
+      id: 'ration',
+      title: 'Ration Services',
+      iconEmoji: '🌾',
+      color: 'text-teal-600',
+      bgColor: 'bg-teal-50',
+      icon: ShoppingBag
+    },
+    {
+      id: 'voter',
+      title: 'Voter Services',
+      iconEmoji: '👆',
+      color: 'text-sky-600',
+      bgColor: 'bg-sky-50',
+      icon: CheckSquare
+    },
+    {
+      id: 'farmer',
+      title: 'Farmer Services',
+      iconEmoji: '👨‍🌾',
+      color: 'text-lime-600',
+      bgColor: 'bg-lime-50',
+      icon: Tractor
+    },
+    {
+      id: 'samagra',
+      title: 'MP Samagra Services',
+      iconEmoji: '🇮🇳',
+      color: 'text-red-600',
+      bgColor: 'bg-red-50',
+      icon: Layers
+    },
+    {
+      id: 'ration_parchi',
+      title: 'MP Ration Parchi Services',
+      iconEmoji: '📜',
+      color: 'text-yellow-600',
+      bgColor: 'bg-yellow-50',
+      icon: FileText
+    },
+    {
+      id: 'sambal',
+      title: 'MP Sambal Services',
+      iconEmoji: '🏆',
+      color: 'text-orange-600',
+      bgColor: 'bg-orange-50',
+      icon: Award
+    },
+    {
+      id: 'ayushman',
+      title: 'Ayushman Services',
+      iconEmoji: '🏥',
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50',
+      icon: HeartPulse
+    },
+    {
+      id: 'edistrict',
+      title: 'MP eDistrict Services',
+      iconEmoji: '🏛️',
+      color: 'text-indigo-600',
+      bgColor: 'bg-indigo-50',
+      icon: Landmark
+    },
+    {
+      id: 'passbook',
+      title: 'Passbook Print Services',
+      iconEmoji: '📖',
+      color: 'text-teal-600',
+      bgColor: 'bg-teal-50',
+      icon: BookOpen
+    },
+    {
+      id: 'gumasta',
+      title: 'Gumasta License',
+      iconEmoji: '🏢',
+      color: 'text-amber-700',
+      bgColor: 'bg-amber-50',
+      icon: Building2
+    },
+    {
+      id: 'lms',
+      title: 'LMS Certificate',
+      iconEmoji: '📜',
+      color: 'text-orange-600',
+      bgColor: 'bg-orange-50',
+      icon: Award
+    },
+    {
+      id: 'udyam',
+      title: 'Apply Udyam Certificate',
+      iconEmoji: '⚙️',
+      color: 'text-blue-700',
+      bgColor: 'bg-blue-50',
+      icon: BadgeCheck
+    },
+    {
+      id: 'nseit',
+      title: 'NSEIT RO Approve',
+      iconEmoji: '🎯',
+      color: 'text-rose-600',
+      bgColor: 'bg-rose-50',
+      icon: ShieldCheck
+    },
+    {
+      id: 'gst',
+      title: 'GST Registration',
+      iconEmoji: '📑',
+      color: 'text-purple-700',
+      bgColor: 'bg-purple-50',
+      icon: Zap
+    }
+  ];
+
   return (
-    <DashboardLayout
-      title="MP Online Kiosk Dashboard"
-      subtitle="Quick service application, live tracking, and instant delivery"
-      roleBadge="MP Online Agent"
-      badgeColor="bg-indigo-500/20 text-indigo-300 border-indigo-500/30"
-    >
-      {/* Announcement Banner */}
-      <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-indigo-950/80 via-slate-900 to-emerald-950/80 border border-indigo-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-indigo-600/30 text-indigo-400">
-            <IdCard className="h-5 w-5" />
+    <DashboardLayout>
+      {/* 1. Greeting Title Bar */}
+      <div className="mb-3">
+        <h2 className="text-sm font-semibold text-slate-800">
+          Hi, <span className="text-slate-900 font-bold">{user?.full_name || 'vijay'}</span>
+        </h2>
+      </div>
+
+      {/* 2. Hero Promotional Banner (Matching reference image) */}
+      <div className="mb-5 rounded-lg bg-gradient-to-r from-[#d9f99d]/60 via-[#bbf7d0]/60 to-[#bae6fd]/60 border border-[#86efac]/80 p-4 sm:p-5 shadow-xs relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="max-w-2xl">
+          <h1 className="text-base sm:text-xl font-black text-[#0f5132] tracking-tight">
+            WE HELP YOU – <span className="text-[#198754]">NO GOVT TROUBLES!</span>
+          </h1>
+          <p className="text-xs sm:text-sm font-bold text-slate-800 mt-0.5">
+            Safe, Secure & Affordable Services at Minimal Cost
+          </p>
+
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold text-slate-700 mt-2">
+            <span className="flex items-center gap-1 text-[#0f5132]">
+              <span className="text-[#198754] font-bold">✔</span> No Govt Complications
+            </span>
+            <span className="flex items-center gap-1 text-[#0f5132]">
+              <span className="text-[#198754] font-bold">✔</span> Only Minimal Charges
+            </span>
+            <span className="flex items-center gap-1 text-[#0f5132]">
+              <span className="text-[#198754] font-bold">✔</span> Reliable Customer Assistance
+            </span>
+            <span className="text-[#198754] font-bold">& MORE...</span>
           </div>
-          <div>
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Fast Service Alert</h4>
-            <p className="text-xs text-slate-300">Samagra ID Member Add & MP e-District certificates live hain. Avg turnaround time: 2-4 hours.</p>
-          </div>
+        </div>
+
+        {/* Right Badge */}
+        <div className="bg-[#15803d] text-white px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-wider shadow shrink-0 self-start md:self-center">
+          FAST SUPPORT | MINIMAL CHARGES
         </div>
       </div>
 
-      {/* KPI Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-8">
-        <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium">Today's Apps</span>
-            <FileText className="h-4 w-4 text-indigo-400" />
-          </div>
-          <p className="text-2xl font-black text-white">0</p>
-        </div>
+      {/* 3. 18 Citizen Services Grid (Matching Screenshot White Grid) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4 mb-8">
+        {services.map((service) => {
+          return (
+            <div
+              key={service.id}
+              onClick={() => setSelectedService(service.title)}
+              className="bg-white rounded-lg p-4 text-center border border-slate-200/90 shadow-xs hover:shadow-md hover:border-blue-300 transition-all duration-150 cursor-pointer flex flex-col items-center justify-between min-h-[125px] group"
+            >
+              {/* Service Icon Area */}
+              <div className="h-12 w-12 flex items-center justify-center text-3xl mb-2 group-hover:scale-110 transition-transform">
+                <span>{service.iconEmoji}</span>
+              </div>
 
-        <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium">Processing</span>
-            <Clock className="h-4 w-4 text-sky-400" />
-          </div>
-          <p className="text-2xl font-black text-sky-400">0</p>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium">Correction Needed</span>
-            <AlertTriangle className="h-4 w-4 text-amber-400" />
-          </div>
-          <p className="text-2xl font-black text-amber-400">0</p>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium">Completed</span>
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-          </div>
-          <p className="text-2xl font-black text-emerald-400">0</p>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl col-span-2 lg:col-span-1">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium">Rejected</span>
-            <XCircle className="h-4 w-4 text-rose-400" />
-          </div>
-          <p className="text-2xl font-black text-rose-400">0</p>
-        </div>
+              {/* Service Title */}
+              <h4 className="text-xs font-semibold text-slate-700 leading-snug group-hover:text-[#1565c0] transition-colors">
+                {service.title}
+              </h4>
+            </div>
+          );
+        })}
       </div>
 
-      {/* Quick Services Grid */}
-      <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4">
-        Popular Citizen Services
-      </h3>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        {/* Samagra Service Card */}
-        <div className="bg-slate-900/80 border border-slate-800 hover:border-indigo-500/50 p-5 rounded-2xl transition-all group">
-          <div className="flex items-center justify-between mb-3">
-            <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 group-hover:scale-105 transition-transform">
-              <IdCard className="h-6 w-6" />
+      {/* 5. Service Selection Modal / Toast Placeholder */}
+      {selectedService && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-6 text-center animate-in fade-in zoom-in duration-150">
+            <div className="h-12 w-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-3">
+              <Zap className="h-6 w-6" />
             </div>
-            <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-md">
-              From ₹ 50
-            </span>
-          </div>
-          <h4 className="text-base font-bold text-white mb-1">Samagra ID Services</h4>
-          <p className="text-xs text-slate-400 mb-4">Member Add, e-KYC Name/DOB update, Split Family ID.</p>
-          <button className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
-            <Plus className="h-3.5 w-3.5" />
-            <span>Apply Request</span>
-          </button>
-        </div>
+            <h3 className="text-lg font-bold text-slate-900">{selectedService}</h3>
+            <p className="text-xs text-slate-500 mt-1 mb-6">
+              Is service ke dynamic form aur area routing ko open karein.
+            </p>
 
-        {/* e-District Service Card */}
-        <div className="bg-slate-900/80 border border-slate-800 hover:border-sky-500/50 p-5 rounded-2xl transition-all group">
-          <div className="flex items-center justify-between mb-3">
-            <div className="p-2.5 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20 group-hover:scale-105 transition-transform">
-              <FileText className="h-6 w-6" />
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-left text-xs space-y-2 mb-6 text-slate-700">
+              <p className="flex justify-between font-medium">
+                <span>Estimated Processing Time:</span>
+                <strong className="text-emerald-700">2-4 Hours</strong>
+              </p>
+              <p className="flex justify-between font-medium">
+                <span>Service Mode:</span>
+                <strong>Auto-Assigned to Area Officer</strong>
+              </p>
             </div>
-            <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-md">
-              From ₹ 80
-            </span>
-          </div>
-          <h4 className="text-base font-bold text-white mb-1">MP e-District Certificates</h4>
-          <p className="text-xs text-slate-400 mb-4">Income (Aay), Domicile (Moolniwasi), Caste (Jati) certificate.</p>
-          <button className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white transition-colors">
-            <Plus className="h-3.5 w-3.5" />
-            <span>Apply Request</span>
-          </button>
-        </div>
 
-        {/* Sambal Card Service */}
-        <div className="bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 p-5 rounded-2xl transition-all group">
-          <div className="flex items-center justify-between mb-3">
-            <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 group-hover:scale-105 transition-transform">
-              <Award className="h-6 w-6" />
+            <div className="flex gap-3">
+              <button
+                onClick={() => setSelectedService(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  alert(`Starting ${selectedService} application flow!`);
+                  setSelectedService(null);
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-md shadow-blue-600/20"
+              >
+                Continue Application
+              </button>
             </div>
-            <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-md">
-              From ₹ 60
-            </span>
           </div>
-          <h4 className="text-base font-bold text-white mb-1">Sambal 2.0 Card</h4>
-          <p className="text-xs text-slate-400 mb-4">New Sambal Registration & Download card.</p>
-          <button className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors">
-            <Plus className="h-3.5 w-3.5" />
-            <span>Apply Request</span>
-          </button>
         </div>
-      </div>
+      )}
     </DashboardLayout>
   );
 };
