@@ -4,20 +4,20 @@ import { useAuth } from '../../context/AuthContext';
 import {
   Menu,
   Home,
-  Printer,
-  CreditCard,
   Wallet,
   User,
-  Share2,
-  FileText,
   Headphones,
   Shield,
   LogOut,
   Moon,
   Sun,
   ChevronRight,
+  UserCheck,
+  UserX,
+  Store,
   PlusCircle,
   MessageCircle,
+  Layers,
   X
 } from 'lucide-react';
 
@@ -53,17 +53,49 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     }
   };
 
-  const menuItems = [
-    { name: 'Dashboard', icon: Home, path: `/${user?.role === 'super_admin' ? 'admin' : user?.role || 'agent'}/dashboard`, color: 'text-blue-600' },
-    { name: 'Print Manage', icon: Printer, path: '#print', hasSub: true, color: 'text-slate-500' },
-    { name: 'Pan Find List', icon: CreditCard, path: '#pan-find', color: 'text-blue-400' },
-    { name: 'Wallet Manage', icon: Wallet, path: '#wallet', badge: `₹${(user?.wallet_balance || 0).toFixed(0)}`, hasSub: true, color: 'text-slate-500' },
-    { name: 'My Account', icon: User, path: '#account', hasSub: true, color: 'text-slate-500' },
-    { name: 'File Sharing', icon: Share2, path: '#files', color: 'text-blue-500' },
-    { name: 'Documents', icon: FileText, path: '#documents', color: 'text-red-500' },
-    { name: 'Complaint', icon: Headphones, path: '#complaint', color: 'text-red-500' },
-    { name: 'Terms & Policies', icon: Shield, path: '#terms', color: 'text-blue-500' }
-  ];
+  interface MenuItem {
+    name: string;
+    icon: React.ElementType;
+    path: string;
+    color: string;
+    badge?: string;
+    hasSub?: boolean;
+  }
+
+  const getMenuItems = (): MenuItem[] => {
+    if (user?.role === 'distributor') {
+      return [
+        { name: 'Dashboard', icon: Home, path: '/distributor/dashboard', color: 'text-blue-600' },
+        { name: 'Shop List', icon: Store, path: '/distributor/shop-list', color: 'text-blue-500' },
+        { name: 'Verify Shops', icon: UserCheck, path: '/distributor/verify-shops', color: 'text-amber-600' },
+        { name: 'Delete Shop Requests', icon: UserX, path: '/distributor/delete-shop-requests', color: 'text-red-500' },
+        { name: 'Complaint', icon: Headphones, path: '/distributor/complaint', color: 'text-red-600' },
+        { name: 'My Profile', icon: User, path: '/distributor/profile', color: 'text-purple-600' }
+      ];
+    }
+
+    if (user?.role === 'super_admin' || user?.role === 'manager') {
+      const basePath = user?.role === 'super_admin' ? '/admin' : '/manager';
+      return [
+        { name: 'Dashboard', icon: Home, path: `${basePath}/dashboard`, color: 'text-blue-600' },
+        { name: 'Shop Management', icon: Store, path: '/admin/shops', color: 'text-blue-600' },
+        { name: 'Services Management', icon: Layers, path: '/admin/services', color: 'text-indigo-600' },
+        { name: 'Wallet Management', icon: Wallet, path: '/admin/wallet', color: 'text-emerald-600' },
+        { name: 'Complaint', icon: Headphones, path: `${basePath}/complaints`, color: 'text-red-600' }
+      ];
+    }
+
+    return [
+      { name: 'Dashboard', icon: Home, path: '/agent/dashboard', color: 'text-blue-600' },
+      { name: 'Services', icon: Layers, path: '/agent/services', color: 'text-indigo-600' },
+      { name: 'Wallet Manage', icon: Wallet, path: '/agent/wallet', color: 'text-emerald-600' },
+      { name: 'Complaint', icon: Headphones, path: '/agent/complaint', color: 'text-red-600' },
+      { name: 'My Profile', icon: User, path: '/agent/profile', color: 'text-purple-600' },
+      { name: 'Terms & Policies', icon: Shield, path: '/agent/terms', color: 'text-blue-500' }
+    ];
+  };
+
+  const menuItems = getMenuItems();
 
   return (
     <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-[#f4f6f9] text-slate-800'} font-sans flex flex-col`}>
@@ -98,19 +130,22 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
           </Link>
         </div>
 
-        {/* Right: Black Wallet Box, Upgrade ID Pink Pill, User Avatar */}
+        {/* Right: User Profile Avatar & Retailer Wallet */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Black Wallet Box */}
-          <div className="flex items-center gap-1.5 bg-[#212529] px-2.5 py-1.5 rounded text-xs font-bold text-white shadow-inner">
-            <Wallet className="h-3.5 w-3.5 text-slate-200" />
-            <span>{(user?.wallet_balance || 0).toFixed(0)}</span>
-          </div>
+          {/* Black Wallet Box & Upgrade ID Pill (Only for Retailer / Agent role) */}
+          {(!user?.role || user?.role === 'agent') && (
+            <>
+              <div className="flex items-center gap-1.5 bg-[#212529] px-2.5 py-1.5 rounded text-xs font-bold text-white shadow-inner">
+                <Wallet className="h-3.5 w-3.5 text-slate-200" />
+                <span>{(user?.wallet_balance || 0).toFixed(0)}</span>
+              </div>
 
-          {/* Magenta / Pink Upgrade ID Button */}
-          <button className="flex items-center gap-1.5 bg-[#e91e63] hover:bg-[#d81b60] text-white text-xs font-bold px-3.5 py-1.5 rounded-full shadow transition-transform hover:scale-105">
-            <PlusCircle className="h-3.5 w-3.5" />
-            <span>Upgrade ID</span>
-          </button>
+              <button className="flex items-center gap-1.5 bg-[#e91e63] hover:bg-[#d81b60] text-white text-xs font-bold px-3.5 py-1.5 rounded-full shadow transition-transform hover:scale-105">
+                <PlusCircle className="h-3.5 w-3.5" />
+                <span>Upgrade ID</span>
+              </button>
+            </>
+          )}
 
           {/* User Profile Avatar */}
           <div className="flex items-center gap-2 pl-1 sm:pl-2">
@@ -139,6 +174,39 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
             {menuItems.map((item, index) => {
               const isActive = location.pathname === item.path || (index === 0 && location.pathname.includes('dashboard'));
               const Icon = item.icon;
+              const isHashLink = item.path.startsWith('#');
+
+              if (isHashLink) {
+                return (
+                  <button
+                    key={item.name}
+                    onClick={(e) => e.preventDefault()}
+                    className={`w-full flex items-center justify-between px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer text-left ${
+                      isDarkMode
+                        ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon className={`h-4 w-4 ${item.color}`} />
+                      {sidebarOpen && <span className="truncate">{item.name}</span>}
+                    </div>
+
+                    {sidebarOpen && item.badge && (
+                      <div className="flex items-center gap-1">
+                        <span className="bg-[#e8f5e9] text-[#2e7d32] border border-[#c8e6c9] text-[10px] font-bold px-1.5 py-0.2 rounded">
+                          {item.badge}
+                        </span>
+                        {item.hasSub && <ChevronRight className="h-3 w-3 text-slate-400" />}
+                      </div>
+                    )}
+
+                    {sidebarOpen && item.hasSub && !item.badge && (
+                      <ChevronRight className="h-3 w-3 text-slate-400" />
+                    )}
+                  </button>
+                );
+              }
 
               return (
                 <Link

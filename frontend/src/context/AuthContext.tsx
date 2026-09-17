@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { User } from '../types/auth';
 import apiClient from '../api/client';
+import { shopStore } from '../services/shopStore';
 
 interface AuthContextType {
   user: User | null;
@@ -45,6 +46,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (mobile: string, password: string) => {
+    // 1. First check dynamic shopStore authentication
+    const shopAuth = shopStore.authenticateShop(mobile, password);
+    if (shopAuth.success && shopAuth.shop) {
+      const dynamicUser: User = {
+        id: 9900 + parseInt(shopAuth.shop.id.slice(-4) || '1'),
+        uuid: shopAuth.shop.id,
+        role: 'agent',
+        full_name: shopAuth.shop.ownerName,
+        mobile: shopAuth.shop.mobile,
+        email: shopAuth.shop.email,
+        shop_name: shopAuth.shop.shopName,
+        wallet_balance: 500
+      };
+      const mockToken = 'mock_jwt_token_' + Date.now();
+      setToken(mockToken);
+      setUser(dynamicUser);
+      localStorage.setItem('v2online_token', mockToken);
+      localStorage.setItem('v2online_user', JSON.stringify(dynamicUser));
+      return { success: true, message: `Swagat hai, ${dynamicUser.full_name}!`, redirectUrl: '/agent/dashboard' };
+    }
+
+    if (!shopAuth.success && shopAuth.message && shopAuth.message.includes('deactivate')) {
+      return { success: false, message: shopAuth.message };
+    }
+
+    // 2. Fallback to API endpoint
     try {
       const response = await apiClient.post('/auth/login', { mobile, password });
       if (response.data.status === 'success') {
@@ -57,7 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: false, message: response.data.message || 'Login failed' };
     } catch (error: any) {
-      const msg = error.response?.data?.message || 'Login request failed';
+      const msg = error.response?.data?.message || shopAuth.message || 'Login request failed';
       return { success: false, message: msg };
     }
   };

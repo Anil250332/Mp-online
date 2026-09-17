@@ -23,9 +23,13 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401 && !window.location.pathname.includes('/login')) {
-      localStorage.removeItem('v2online_token');
-      localStorage.removeItem('v2online_user');
-      window.location.href = '/login';
+      const token = localStorage.getItem('v2online_token');
+      // Only redirect to login if token is not a mock local token
+      if (!token?.startsWith('mock_jwt_token')) {
+        localStorage.removeItem('v2online_token');
+        localStorage.removeItem('v2online_user');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

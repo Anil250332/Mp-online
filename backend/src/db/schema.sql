@@ -229,3 +229,25 @@ CREATE TABLE IF NOT EXISTS user_requests (
     FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (reviewed_by) REFERENCES users(id)
 );
+
+-- 13. Dedicated Shops Registry Table
+CREATE TABLE IF NOT EXISTS shops (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    shop_id_code VARCHAR(50) UNIQUE NOT NULL,
+    user_id BIGINT UNIQUE NULL,
+    owner_name VARCHAR(100) NOT NULL,
+    shop_name VARCHAR(150) NOT NULL,
+    mobile VARCHAR(15) UNIQUE NOT NULL,
+    email VARCHAR(100) NULL,
+    aadhaar_number VARCHAR(16) NULL,
+    full_address TEXT NULL,
+    district VARCHAR(100) NULL,
+    tehsil VARCHAR(100) NULL,
+    ward_no VARCHAR(50) NULL,
+    distributor_id BIGINT NULL,
+    status ENUM('pending', 'active', 'rejected', 'delete_requested') DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (distributor_id) REFERENCES users(id) ON DELETE SET NULL
+);

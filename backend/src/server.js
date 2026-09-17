@@ -6,6 +6,10 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { initDb } from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
+import shopRoutes from './routes/shopRoutes.js';
+import complaintRoutes from './routes/complaintRoutes.js';
+import walletRoutes from './routes/walletRoutes.js';
+import serviceRoutes from './routes/serviceRoutes.js';
 
 dotenv.config();
 
@@ -44,6 +48,10 @@ app.get('/api/health', (req, res) => {
 
 // Route Mounts
 app.use('/api/auth', authRoutes);
+app.use('/api/shops', shopRoutes);
+app.use('/api/complaints', complaintRoutes);
+app.use('/api/wallet', walletRoutes);
+app.use('/api/services', serviceRoutes);
 
 // Root route
 app.get('/', (req, res) => {

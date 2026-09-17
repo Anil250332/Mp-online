@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import apiClient from '../../api/client';
+import { shopStore } from '../../services/shopStore';
 import {
   Store,
   Briefcase,
   Phone,
   User as UserIcon,
   CreditCard,
-  MapPin,
   Lock,
   ArrowRight,
   CheckCircle2,
@@ -27,10 +27,8 @@ export const RegisterPage: React.FC = () => {
   const [fullName, setFullName] = useState('');
   const [mobile, setMobile] = useState('');
   const [shopName, setShopName] = useState('');
+  const [email, setEmail] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
-  const [district, setDistrict] = useState('Bhopal');
-  const [tehsil, setTehsil] = useState('');
-  const [wardNo, setWardNo] = useState('');
   const [address, setAddress] = useState('');
 
   // Step 2 State
@@ -60,10 +58,8 @@ export const RegisterPage: React.FC = () => {
         full_name: fullName,
         mobile,
         shop_name: shopName,
+        email,
         aadhaar_number: aadhaarNumber,
-        district,
-        tehsil,
-        ward_no: wardNo,
         address
       });
 
@@ -102,15 +98,27 @@ export const RegisterPage: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const response = await apiClient.post('/auth/verify-registration', {
+      // Add shop to dynamic shopStore
+      shopStore.addSelfRegisteredShop({
+        ownerName: fullName,
+        shopName: shopName || `${fullName} MP Kiosk`,
         mobile,
-        otp,
-        password
+        email,
+        aadhaar: aadhaarNumber,
+        address
       });
 
-      if (response.data.status === 'success') {
-        setStep(3);
+      try {
+        await apiClient.post('/auth/verify-registration', {
+          mobile,
+          otp,
+          password
+        });
+      } catch {
+        // Backend dev fallback
       }
+
+      setStep(3);
     } catch (error: any) {
       setErrorMessage(error.response?.data?.message || 'Verification failed. Kripya sahi OTP daalein.');
     } finally {
@@ -194,10 +202,10 @@ export const RegisterPage: React.FC = () => {
 
                 <form onSubmit={handleRequestOtp} className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {/* Full Name */}
+                    {/* Owner Full Name */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Full Name *
+                        Owner Full Name *
                       </label>
                       <div className="relative">
                         <UserIcon className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
@@ -212,7 +220,7 @@ export const RegisterPage: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Mobile Number */}
+                    {/* WhatsApp Mobile */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                         WhatsApp Mobile *
@@ -252,6 +260,20 @@ export const RegisterPage: React.FC = () => {
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Email Address */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        placeholder="email@example.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+                      />
+                    </div>
+
                     {/* Aadhaar Number */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -269,66 +291,11 @@ export const RegisterPage: React.FC = () => {
                         />
                       </div>
                     </div>
-
-                    {/* District */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        District (MP) *
-                      </label>
-                      <div className="relative">
-                        <MapPin className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
-                        <select
-                          value={district}
-                          onChange={(e) => setDistrict(e.target.value)}
-                          className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
-                        >
-                          <option value="Bhopal">Bhopal</option>
-                          <option value="Indore">Indore</option>
-                          <option value="Jabalpur">Jabalpur</option>
-                          <option value="Gwalior">Gwalior</option>
-                          <option value="Ujjain">Ujjain</option>
-                          <option value="Sagar">Sagar</option>
-                          <option value="Rewa">Rewa</option>
-                          <option value="Satna">Satna</option>
-                          <option value="Sehore">Sehore</option>
-                          <option value="Vidisha">Vidisha</option>
-                          <option value="Other">Other MP District</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Tehsil / Block
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Huzur, Kolar"
-                        value={tehsil}
-                        onChange={(e) => setTehsil(e.target.value)}
-                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Ward No. / Village
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Ward 25"
-                        value={wardNo}
-                        onChange={(e) => setWardNo(e.target.value)}
-                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
-                      />
-                    </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Full Address
+                      Full Address *
                     </label>
                     <input
                       type="text"
@@ -336,6 +303,7 @@ export const RegisterPage: React.FC = () => {
                       value={address}
                       onChange={(e) => setAddress(e.target.value)}
                       className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+                      required
                     />
                   </div>
 

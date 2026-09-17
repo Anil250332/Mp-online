@@ -151,7 +151,44 @@ export const LoginPage: React.FC = () => {
               </div>
             </form>
 
-            <div className="mt-6 pt-5 border-t border-slate-100 text-center">
+            <div className="mt-6 pt-5 border-t border-slate-100 text-center space-y-3">
+              {/* Quick Demo Fill Buttons for Testing */}
+              <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl text-left space-y-2">
+                <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider block">⚡ Quick Demo Logins</span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobile('9876543210');
+                      setPassword('password123');
+                    }}
+                    className="px-2.5 py-1 bg-white hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    🏪 Retailer Shop (9876543210)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobile('8888888888');
+                      setPassword('Distributor@123');
+                    }}
+                    className="px-2.5 py-1 bg-white hover:bg-blue-100 border border-blue-200 text-blue-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    🏬 Distributor (8888888888)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobile('9999999999');
+                      setPassword('Admin@12345');
+                    }}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    👑 Super Admin (9999999999)
+                  </button>
+                </div>
+              </div>
+
               <p className="text-xs text-slate-600">
                 Naye Retailer ya Operator hain?{' '}
                 <Link to="/register" className="font-bold text-blue-600 hover:text-blue-700">

@@ -1,0 +1,210 @@
+import pool from '../config/db.js';
+
+/**
+ * 1. Get Wallet Balance and Transaction Ledger
+ * GET /api/wallet/transactions
+ */
+export const getWalletTransactions = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const userRole = req.user?.role || 'agent';
+
+    let query = `
+      SELECT t.id, t.txn_no as txnNo, t.type, t.category, t.amount,
+             t.opening_balance as openingBalance, t.closing_balance as closingBalance,
+             t.remarks, t.status, t.created_at as createdAt,
+             u.full_name as userName, u.shop_name as shopName, u.mobile as userMobile, u.role as userRole
+      FROM transactions t
+      LEFT JOIN users u ON t.user_id = u.id
+    `;
+
+    const params = [];
+    if (userRole !== 'super_admin' && userRole !== 'manager' && userId) {
+      query += ' WHERE t.user_id = ?';
+      params.push(userId);
+    }
+
+    query += ' ORDER BY t.created_at DESC';
+
+    const [rows] = await pool.query(query, params);
+
+    // Fetch current user wallet balance
+    let balance = 0.00;
+    if (userId) {
+      const [wRows] = await pool.query('SELECT balance FROM wallets WHERE user_id = ?', [userId]);
+      if (wRows.length > 0) {
+        balance = parseFloat(wRows[0].balance);
+      }
+    }
+
+    const formattedTxns = rows.map(r => ({
+      id: r.id.toString(),
+      txnNo: r.txnNo,
+      type: r.type.toUpperCase(),
+      category: r.category,
+      amount: parseFloat(r.amount),
+      openingBalance: parseFloat(r.openingBalance),
+      closingBalance: parseFloat(r.closingBalance),
+      remarks: r.remarks,
+      status: r.status.toUpperCase(),
+      userName: r.userName || 'Shop Retailer',
+      shopName: r.shopName || r.userName || 'MP Online Center',
+      userMobile: r.userMobile || 'N/A',
+      userRole: r.userRole || 'agent',
+      createdAt: new Date(r.createdAt).toLocaleString('en-IN', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      })
+    }));
+
+    return res.status(200).json({
+      status: 'success',
+      balance,
+      data: formattedTxns
+    });
+  } catch (error) {
+    console.error('Get Wallet Transactions Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * 2. Recharge Wallet (Add Money)
+ * POST /api/wallet/recharge
+ */
+export const rechargeWallet = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const userId = req.user?.id || 1;
+    const { amount, remarks } = req.body;
+    const rechargeAmt = parseFloat(amount);
+
+    if (isNaN(rechargeAmt) || rechargeAmt <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Kripya sahi recharge amount enter karein.' });
+    }
+
+    await connection.beginTransaction();
+
+    // Fetch current wallet
+    const [wallets] = await connection.query('SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE', [userId]);
+    let walletId;
+    let openingBalance = 0.00;
+
+    if (wallets.length === 0) {
+      const [wRes] = await connection.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [userId]);
+      walletId = wRes.insertId;
+    } else {
+      walletId = wallets[0].id;
+      openingBalance = parseFloat(wallets[0].balance);
+    }
+
+    const closingBalance = openingBalance + rechargeAmt;
+
+    // Update Wallet Balance
+    await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closingBalance, walletId]);
+
+    // Insert dummy transaction first to get insertId for TXN-2026-XXXX format
+    const gatewayTxnId = `UPI-${Date.now()}`;
+    const [txnRes] = await connection.query(
+      `INSERT INTO transactions (
+        txn_no, wallet_id, user_id, type, category, amount,
+        opening_balance, closing_balance, gateway_txn_id, status, remarks
+      ) VALUES (?, ?, ?, 'credit', 'topup', ?, ?, ?, ?, 'success', ?)`,
+      ['TXN-TEMP', walletId, userId, rechargeAmt, openingBalance, closingBalance, gatewayTxnId, remarks || 'Wallet Topup via Auto UPI / Payment Gateway']
+    );
+
+    const year = new Date().getFullYear();
+    const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
+    await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
+
+    await connection.commit();
+
+    return res.status(200).json({
+      status: 'success',
+      message: `₹${rechargeAmt.toFixed(2)} wallet me add kar diye gaye hain!`,
+      data: {
+        txnNo,
+        amount: rechargeAmt,
+        closingBalance,
+        createdAt: new Date().toLocaleString()
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Recharge Wallet Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+/**
+ * 3. Deduct Wallet Balance for Service
+ * POST /api/wallet/deduct
+ */
+export const deductWallet = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const userId = req.user?.id || 1;
+    const { amount, serviceName } = req.body;
+    const deductAmt = parseFloat(amount);
+
+    if (isNaN(deductAmt) || deductAmt <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Invalid deduction amount.' });
+    }
+
+    await connection.beginTransaction();
+
+    const [wallets] = await connection.query('SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE', [userId]);
+    if (wallets.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: 'Wallet not found.' });
+    }
+
+    const walletId = wallets[0].id;
+    const openingBalance = parseFloat(wallets[0].balance);
+
+    if (openingBalance < deductAmt) {
+      await connection.rollback();
+      return res.status(400).json({
+        status: 'error',
+        message: `Insufficient wallet balance! Current balance is ₹${openingBalance.toFixed(2)}, required ₹${deductAmt.toFixed(2)}. Kripya wallet recharge karein.`
+      });
+    }
+
+    const closingBalance = openingBalance - deductAmt;
+
+    // Update Wallet Balance
+    await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closingBalance, walletId]);
+
+    const [txnRes] = await connection.query(
+      `INSERT INTO transactions (
+        txn_no, wallet_id, user_id, type, category, amount,
+        opening_balance, closing_balance, status, remarks
+      ) VALUES (?, ?, ?, 'debit', 'service_fee', ?, ?, ?, 'success', ?)`,
+      ['TXN-TEMP', walletId, userId, deductAmt, openingBalance, closingBalance, `Service Fee for ${serviceName || 'Application'}`]
+    );
+
+    const year = new Date().getFullYear();
+    const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
+    await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
+
+    await connection.commit();
+
+    return res.status(200).json({
+      status: 'success',
+      message: `₹${deductAmt.toFixed(2)} service fee deduct kar li gayi hai!`,
+      data: {
+        txnNo,
+        amount: deductAmt,
+        closingBalance
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Deduct Wallet Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
+  }
+};
