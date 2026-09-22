@@ -57,7 +57,10 @@ export const getShops = async (req, res) => {
         ? 'ACTIVE'
         : 'INACTIVE',
       deleteReason: r.deleteReason || undefined,
-      createdAt: new Date(r.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      createdAt: new Date(r.createdAt).toLocaleString('en-IN', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      })
     }));
 
     return res.status(200).json({

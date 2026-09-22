@@ -9,14 +9,52 @@ import {
   Trash2,
   Search,
   Phone,
-  Mail
+  Mail,
+  PlusCircle,
+  X,
+  AlertTriangle
 } from 'lucide-react';
+
+const formatDateTime = (dateStr?: string) => {
+  if (!dateStr || dateStr === 'N/A') return 'N/A';
+  if (typeof dateStr === 'string' && (dateStr.includes('AM') || dateStr.includes('PM') || dateStr.includes('am') || dateStr.includes('pm'))) {
+    return dateStr;
+  }
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch {
+    return dateStr;
+  }
+};
 
 export default function AdminShops() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [activeTab, setActiveTab] = useState<'ALL' | 'APPROVED' | 'PENDING' | 'DELETE_REQUESTS'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Add Shop Modal State
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [addForm, setAddForm] = useState({
+    shopName: '',
+    ownerName: '',
+    mobile: '',
+    email: '',
+    aadhaar: '',
+    address: '',
+    password: ''
+  });
 
   useEffect(() => {
     const updateShops = () => {
@@ -69,6 +107,51 @@ export default function AdminShops() {
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
+  const handleAddShopSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError('');
+
+    if (!addForm.shopName.trim() || !addForm.ownerName.trim() || !addForm.mobile.trim() || !addForm.password.trim()) {
+      setFormError('Please fill in all mandatory fields (Shop Name, Owner Name, Mobile, Password).');
+      return;
+    }
+
+    if (addForm.mobile.length < 10) {
+      setFormError('Please enter a valid 10-digit mobile number.');
+      return;
+    }
+
+    try {
+      setFormLoading(true);
+      await shopStore.addActiveShopByDistributor({
+        shopName: addForm.shopName,
+        ownerName: addForm.ownerName,
+        mobile: addForm.mobile,
+        email: addForm.email,
+        aadhaar: addForm.aadhaar,
+        address: addForm.address,
+        password: addForm.password
+      });
+
+      setSuccessMsg(`New Shop "${addForm.shopName}" added and activated successfully!`);
+      setIsAddModalOpen(false);
+      setAddForm({
+        shopName: '',
+        ownerName: '',
+        mobile: '',
+        email: '',
+        aadhaar: '',
+        address: '',
+        password: ''
+      });
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to add shop. Please try again.');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -84,6 +167,17 @@ export default function AdminShops() {
               Control shop registrations, partner verification requests, and distributor deletion requests.
             </p>
           </div>
+
+          <button
+            onClick={() => {
+              setFormError('');
+              setIsAddModalOpen(true);
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+          >
+            <PlusCircle className="h-4 w-4" />
+            <span>Add New Shop</span>
+          </button>
         </div>
 
         {/* Action Message Banner */}
@@ -171,6 +265,7 @@ export default function AdminShops() {
                   <th className="py-3.5 px-4">Owner Name</th>
                   <th className="py-3.5 px-4">Contact Info</th>
                   <th className="py-3.5 px-4">Address</th>
+                  <th className="py-3.5 px-4">Timestamps</th>
                   <th className="py-3.5 px-4 text-center">Status</th>
                   <th className="py-3.5 px-4 text-right">Admin Action</th>
                 </tr>
@@ -178,7 +273,7 @@ export default function AdminShops() {
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
                 {filteredShops.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-slate-400 text-xs">
+                    <td colSpan={7} className="py-12 text-center text-slate-400 text-xs">
                       No shops found in this category.
                     </td>
                   </tr>
@@ -212,6 +307,10 @@ export default function AdminShops() {
 
                       <td className="py-3.5 px-4 text-slate-600 max-w-xs truncate font-medium">
                         {shop.address}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-slate-600 text-[11px] space-y-0.5 min-w-[170px]">
+                        <div><span className="text-[9px] font-bold uppercase text-slate-400"> </span><strong>{formatDateTime(shop.requestedAt || shop.createdAt)}</strong></div>
                       </td>
 
                       <td className="py-3.5 px-4 text-center">
@@ -291,6 +390,154 @@ export default function AdminShops() {
             </table>
           </div>
         </div>
+
+        {/* Add New Shop Modal */}
+        {isAddModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95">
+              
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2 text-slate-800 font-bold text-base">
+                  <Store className="h-5 w-5 text-blue-600" />
+                  <span>Add New Shop (Admin)</span>
+                </div>
+                <button
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddShopSubmit} className="space-y-3.5">
+                
+                {formError && (
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Shop Name *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter Shop / Outlet Name"
+                    value={addForm.shopName}
+                    onChange={(e) => setAddForm({ ...addForm, shopName: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Owner Name *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Full Name of Owner"
+                    value={addForm.ownerName}
+                    onChange={(e) => setAddForm({ ...addForm, ownerName: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Mobile Number *
+                    </label>
+                    <input
+                      type="tel"
+                      maxLength={10}
+                      placeholder="10-digit Mobile"
+                      value={addForm.mobile}
+                      onChange={(e) => setAddForm({ ...addForm, mobile: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Login Password *
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="Set Password"
+                      value={addForm.password}
+                      onChange={(e) => setAddForm({ ...addForm, password: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="Email Address"
+                      value={addForm.email}
+                      onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Aadhaar Number
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={12}
+                      placeholder="12-digit Aadhaar"
+                      value={addForm.aadhaar}
+                      onChange={(e) => setAddForm({ ...addForm, aadhaar: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Shop Address
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Full Address / City / District"
+                    value={addForm.address}
+                    onChange={(e) => setAddForm({ ...addForm, address: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+
+                <div className="pt-2 flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={formLoading}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    {formLoading ? 'Adding Shop...' : 'Create & Activate Shop'}
+                  </button>
+                </div>
+
+              </form>
+            </div>
+          </div>
+        )}
 
       </div>
     </DashboardLayout>

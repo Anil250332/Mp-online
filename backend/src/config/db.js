@@ -78,6 +78,95 @@ export const initDb = async () => {
       );
     `);
 
+    // Ensure sub_admin role exists in ENUM (for existing databases)
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE users MODIFY COLUMN role ENUM('super_admin', 'sub_admin', 'manager', 'distributor', 'operator', 'agent') NOT NULL;
+      `);
+    } catch (e) {
+      // Ignore if already correct
+    }
+
+    // Ensure services table has necessary columns for dynamic forms & sub-services
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE services ADD COLUMN icon_url VARCHAR(500) NULL;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE services ADD COLUMN has_sub_services BOOLEAN DEFAULT FALSE;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE services ADD COLUMN fee DECIMAL(10,2) DEFAULT 0.00;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE services ADD COLUMN admin_commission_percentage DECIMAL(5,2) DEFAULT 0.00;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE services ADD COLUMN form_schema JSON NULL;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE services ADD COLUMN required_docs JSON NULL;
+      `);
+    } catch (e) {}
+
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE sub_services ADD COLUMN icon_url VARCHAR(500) NULL;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE sub_services ADD COLUMN fee DECIMAL(10,2) DEFAULT 0.00;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE sub_services ADD COLUMN admin_commission_percentage DECIMAL(5,2) DEFAULT 0.00;
+      `);
+    } catch (e) {}
+
+    // Operator Assignment Mode columns for service-level operator routing
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE services ADD COLUMN operator_assignment_mode ENUM('single','area_wise','ward_wise') DEFAULT 'single';
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE sub_services ADD COLUMN operator_assignment_mode ENUM('single','area_wise','ward_wise') DEFAULT 'single';
+      `);
+    } catch (e) {}
+
+    // Area label column for operator_assignments (office/area name)
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE operator_assignments ADD COLUMN area_label VARCHAR(150) NULL;
+      `);
+    } catch (e) {}
+
     await rawConn.end();
 
     // 3. Check and Seed Super Admin
@@ -122,6 +211,26 @@ export const initDb = async () => {
       console.log(`   📱 Mobile: ${distMobile} | 🔑 Password: Distributor@123`);
     } else {
       distributorId = distributorRows[0].id;
+    }
+
+    // 4b. Check and Seed Default Manager
+    const [managerRows] = await pool.query("SELECT id FROM users WHERE role = 'manager' LIMIT 1");
+    if (managerRows.length === 0) {
+      const mgrMobile = '7777777777';
+      const mgrPasswordHash = await bcrypt.hash('Manager@123', 10);
+      const mgrUuid = crypto.randomUUID();
+
+      const [mgrRes] = await pool.query(
+        `INSERT INTO users (
+          uuid, role, full_name, mobile, email, password_hash, district, tehsil, approval_status, is_active
+        ) VALUES (?, 'manager', 'Sanjay Verma Manager', ?, 'manager@v2online.in', ?, 'Bhopal', 'Huzur', 'approved', true)`,
+        [mgrUuid, mgrMobile, mgrPasswordHash]
+      );
+
+      await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 5000.00)', [mgrRes.insertId]);
+
+      console.log('💼 [Auto-Seed] Default Manager initialized on XAMPP MySQL:');
+      console.log(`   📱 Mobile: ${mgrMobile} | 🔑 Password: Manager@123`);
     }
 
     // 5. Check and Seed Default Initial Shops into MySQL DB

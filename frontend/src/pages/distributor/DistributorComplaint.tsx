@@ -9,13 +9,18 @@ import {
   CheckCircle2,
   AlertCircle,
   Search,
-  X
+  X,
+  Tag,
+  Calendar,
+  Eye,
+  FileText
 } from 'lucide-react';
 
 export default function DistributorComplaint() {
   const { user } = useAuth();
   const [complaints, setComplaints] = useState<ComplaintTicket[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [viewTicket, setViewTicket] = useState<ComplaintTicket | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   
   // Form State
@@ -28,14 +33,14 @@ export default function DistributorComplaint() {
   // Sync with central store
   useEffect(() => {
     const syncTickets = () => {
-      setComplaints(complaintStore.getComplaints());
+      setComplaints(complaintStore.getComplaintsForUser(user?.id, user?.mobile, user?.full_name));
     };
     syncTickets();
     const unsubscribe = complaintStore.subscribe(syncTickets);
     return unsubscribe;
-  }, []);
+  }, [user?.id, user?.mobile, user?.full_name]);
 
-  const handleSubmitComplaint = (e: React.FormEvent) => {
+  const handleSubmitComplaint = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -44,10 +49,10 @@ export default function DistributorComplaint() {
       return;
     }
 
-    const newTicket = complaintStore.addComplaint({
-      raisedByUserId: user?.mobile || user?.id || '8888888888',
-      raisedByName: user?.full_name || 'Distributor User',
-      raisedByRole: (user?.role as any) || 'distributor',
+    const newTicket = await complaintStore.addComplaint({
+      raisedByUserId: user?.id || user?.mobile || '8888888888',
+      raisedByName: user?.full_name || 'Portal User',
+      raisedByRole: (user?.role as any) || 'agent',
       subject,
       category,
       description
@@ -80,6 +85,12 @@ export default function DistributorComplaint() {
     return (b.id || '').localeCompare(a.id || '');
   });
 
+  const getPortalTitle = () => {
+    if (user?.role === 'agent') return 'Shop / Retailer Helpdesk & Complaint Portal';
+    if (user?.role === 'operator') return 'Operator Helpdesk & Complaint Portal';
+    return 'Distributor Helpdesk & Complaint Portal';
+  };
+
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6">
@@ -89,7 +100,7 @@ export default function DistributorComplaint() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-800 flex items-center gap-2">
               <Headphones className="h-6 w-6 text-red-600" />
-              <span>Distributor Helpdesk & Complaint Portal</span>
+              <span>{getPortalTitle()}</span>
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 mt-1">
               Raise support tickets for technical glitches, portal issues, or manager assistance.
@@ -98,7 +109,7 @@ export default function DistributorComplaint() {
 
           <button
             onClick={() => setIsModalOpen(true)}
-            className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2"
+            className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
           >
             <PlusCircle className="h-4 w-4" />
             <span>Raise New Ticket</span>
@@ -114,73 +125,214 @@ export default function DistributorComplaint() {
         )}
 
         {/* Search Bar */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
           <div className="relative w-full">
-            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Search className="h-4 w-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               placeholder="Search by Ticket No, Subject, or Category..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+              className="w-full bg-slate-50/80 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:bg-white transition-all"
             />
           </div>
         </div>
 
-        {/* Tickets List */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-slate-200">
-            <h2 className="text-sm font-bold text-slate-800">Your Support Tickets ({filteredComplaints.length})</h2>
+        {/* Tickets Section */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <span>Your Support Tickets</span>
+              <span className="bg-slate-100 text-slate-700 text-xs px-2.5 py-0.5 rounded-full border border-slate-200 font-mono">
+                {filteredComplaints.length}
+              </span>
+            </h2>
           </div>
 
-          <div className="divide-y divide-slate-100">
-            {filteredComplaints.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-xs">
-                No support tickets found matching your search.
-              </div>
-            ) : (
-              filteredComplaints.map((item) => (
-                <div key={item.id} className="p-5 hover:bg-slate-50/70 transition-colors space-y-2">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">
-                        {item.ticketNo}
+          {filteredComplaints.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400 text-xs sm:text-sm shadow-xs">
+              <Headphones className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+              <p className="font-semibold text-slate-600">No support tickets found.</p>
+              <p className="text-slate-400 text-xs mt-1">Click "Raise New Ticket" above to submit a support request.</p>
+            </div>
+          ) : (
+            <div className="space-y-3.5">
+              {filteredComplaints.map((item) => {
+                const statusBorderClass =
+                  item.status === 'RESOLVED'
+                    ? 'border-l-4 border-l-emerald-500'
+                    : item.status === 'IN_REVIEW'
+                    ? 'border-l-4 border-l-amber-500'
+                    : 'border-l-4 border-l-red-500';
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-xs hover:shadow-md transition-all duration-200 space-y-3.5 ${statusBorderClass}`}
+                  >
+                    {/* Top Row: Ticket No, Category Badge, Status Badge */}
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs font-black text-blue-700 bg-blue-50/90 px-3 py-1 rounded-lg border border-blue-200/60 shadow-2xs">
+                          {item.ticketNo}
+                        </span>
+                        
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-lg border border-slate-200/60">
+                          <Tag className="h-3 w-3 text-slate-400" />
+                          <span>{item.category}</span>
+                        </span>
+                      </div>
+
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full border shadow-2xs ${
+                        item.status === 'RESOLVED'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : item.status === 'IN_REVIEW'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-red-50 text-red-700 border-red-200'
+                      }`}>
+                        {item.status === 'RESOLVED' ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : item.status === 'IN_REVIEW' ? (
+                          <Clock className="h-3.5 w-3.5 text-amber-600" />
+                        ) : (
+                          <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                        )}
+                        <span>{item.status.replace('_', ' ')}</span>
                       </span>
-                      <h3 className="text-sm font-bold text-slate-900">{item.subject}</h3>
                     </div>
 
-                    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                      item.status === 'RESOLVED'
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : item.status === 'IN_REVIEW'
-                        ? 'bg-amber-50 text-amber-700 border-amber-200'
-                        : 'bg-red-50 text-red-700 border-red-200'
-                    }`}>
-                      {item.status === 'RESOLVED' ? <CheckCircle2 className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
-                      {item.status}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-600 pl-1">{item.description}</p>
-
-                  {item.resolutionNote && (
-                    <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-900 font-medium flex items-start gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-                      <div>
-                        <strong>Resolution Note:</strong> {item.resolutionNote}
+                    {/* Subject & Description */}
+                    <div className="space-y-1.5">
+                      <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
+                        {item.subject}
+                      </h3>
+                      
+                      <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-100 text-xs sm:text-sm text-slate-600 line-clamp-2 leading-relaxed">
+                        {item.description}
                       </div>
                     </div>
-                  )}
 
-                  <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-100">
-                    <span>Category: <strong>{item.category}</strong></span>
-                    <span>Created: {item.createdAt}</span>
+                    {/* Resolution Remarks Box if Resolved */}
+                    {item.resolutionNote && (
+                      <div className="p-3.5 bg-emerald-50/80 border border-emerald-200/90 rounded-xl text-xs text-emerald-950 font-medium space-y-1">
+                        <div className="flex items-center gap-1.5 text-emerald-800 font-bold">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          <span>Admin Resolution Remarks ({item.resolvedBy || 'Support Desk'}):</span>
+                        </div>
+                        <p className="text-slate-700 pl-5 leading-relaxed">{item.resolutionNote}</p>
+                      </div>
+                    )}
+
+                    {/* Card Footer: Date & View Details Button */}
+                    <div className="flex items-center justify-between pt-2.5 border-t border-slate-100 text-[11px] text-slate-500">
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                        <span>Raised on <strong>{item.createdAt}</strong></span>
+                      </div>
+
+                      <button
+                        onClick={() => setViewTicket(item)}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5 border border-slate-200 cursor-pointer"
+                      >
+                        <Eye className="h-3.5 w-3.5 text-slate-600" />
+                        <span>View Details</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* View Details Modal */}
+        {viewTicket && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95">
+              
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2 text-slate-900 font-bold text-base">
+                  <Headphones className="h-5 w-5 text-red-600" />
+                  <span>Ticket Details</span>
+                </div>
+                <button
+                  onClick={() => setViewTicket(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Ticket Summary Header Card */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-black text-blue-700 text-sm">{viewTicket.ticketNo}</span>
+                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                    viewTicket.status === 'RESOLVED'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : viewTicket.status === 'IN_REVIEW'
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-red-50 text-red-700 border-red-200'
+                  }`}>
+                    {viewTicket.status.replace('_', ' ')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 pt-2 border-t border-slate-200">
+                  <div className="flex items-center gap-1.5">
+                    <Tag className="h-3.5 w-3.5 text-slate-400" />
+                    <span>Category: <strong>{viewTicket.category}</strong></span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                    <span>Date: <strong>{viewTicket.createdAt}</strong></span>
                   </div>
                 </div>
-              ))
-            )}
+              </div>
+
+              {/* Subject & Description */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                  <FileText className="h-4 w-4 text-red-600" />
+                  <span>Subject: {viewTicket.subject}</span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Full Description / Details:
+                  </label>
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-slate-800 text-xs sm:text-sm whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+                    {viewTicket.description}
+                  </div>
+                </div>
+              </div>
+
+              {/* Resolution Remarks */}
+              {viewTicket.resolutionNote && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-1">
+                  <span className="font-bold text-emerald-800 flex items-center gap-1">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    Official Resolution Remarks ({viewTicket.resolvedBy || 'Support Team'}):
+                  </span>
+                  <p className="text-emerald-950 leading-relaxed pl-5">{viewTicket.resolutionNote}</p>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="pt-3 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setViewTicket(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors shadow-xs cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Raise Ticket Modal */}
         {isModalOpen && (
@@ -194,7 +346,7 @@ export default function DistributorComplaint() {
                 </div>
                 <button
                   onClick={() => setIsModalOpen(false)}
-                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -258,13 +410,13 @@ export default function DistributorComplaint() {
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50"
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors"
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors cursor-pointer"
                   >
                     Submit Ticket
                   </button>
@@ -279,3 +431,4 @@ export default function DistributorComplaint() {
     </DashboardLayout>
   );
 }
+

@@ -13,7 +13,10 @@ const otpStore = new Map();
  */
 export const requestRegistrationOtp = async (req, res) => {
   try {
-    const { full_name, mobile, role = 'agent', shop_name, aadhaar_number, district, tehsil, ward_no, address } = req.body;
+    const { 
+      full_name, mobile, role = 'agent', shop_name, office_name, 
+      aadhaar_number, district, tehsil, ward_no, address, designation, area, email 
+    } = req.body;
 
     if (!mobile || !full_name) {
       return res.status(400).json({
@@ -50,10 +53,11 @@ export const requestRegistrationOtp = async (req, res) => {
         full_name,
         mobile,
         role,
-        shop_name: role === 'agent' ? shop_name : null,
+        email: email || null,
+        shop_name: role === 'agent' ? shop_name : (office_name || shop_name || null),
         aadhaar_number: aadhaar_number || null,
-        district: district || null,
-        tehsil: tehsil || null,
+        district: area || district || null,
+        tehsil: designation || tehsil || null,
         ward_no: ward_no || null,
         address: address || null
       }
@@ -132,14 +136,15 @@ export const verifyRegistration = async (req, res) => {
 
     const [userResult] = await connection.query(
       `INSERT INTO users (
-        uuid, role, full_name, mobile, password_hash, shop_name, aadhaar_number, 
+        uuid, role, full_name, mobile, email, password_hash, shop_name, aadhaar_number, 
         district, tehsil, ward_no, address, approval_status, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', true)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', true)`,
       [
         userUuid,
         userData.role,
         userData.full_name,
         userData.mobile,
+        userData.email || null,
         passwordHash,
         userData.shop_name,
         userData.aadhaar_number,
@@ -253,6 +258,7 @@ export const login = async (req, res) => {
     // Multi-role redirect URL mapping
     const redirectMap = {
       super_admin: '/admin/dashboard',
+      sub_admin: '/admin/dashboard',
       manager: '/manager/dashboard',
       distributor: '/distributor/dashboard',
       operator: '/operator/dashboard',
@@ -332,5 +338,47 @@ export const getMe = async (req, res) => {
       status: 'error',
       message: 'Failed to fetch user profile.'
     });
+  }
+};
+
+/**
+ * 6. Change Password Endpoint
+ * POST /api/auth/change-password
+ */
+export const changePassword = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ status: 'error', message: 'Unauthorized session. Please login again.' });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ status: 'error', message: 'Current password and new password are required.' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ status: 'error', message: 'New password must be at least 6 characters long.' });
+    }
+
+    const [users] = await pool.query('SELECT id, password_hash FROM users WHERE id = ?', [userId]);
+    if (users.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'User account not found.' });
+    }
+
+    const user = users[0];
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ status: 'error', message: 'Galat Current Password enter kiya gaya hai.' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, userId]);
+
+    return res.status(200).json({ status: 'success', message: 'Password successfully updated!' });
+  } catch (error) {
+    console.error('Change Password Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
   }
 };

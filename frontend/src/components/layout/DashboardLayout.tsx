@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -9,15 +9,17 @@ import {
   Headphones,
   Shield,
   LogOut,
-  Moon,
-  Sun,
   ChevronRight,
+  ChevronDown,
   UserCheck,
   UserX,
   Store,
-  PlusCircle,
-  MessageCircle,
   Layers,
+  Users,
+  UserCog,
+  Settings,
+  Percent,
+  FileCheck,
   X
 } from 'lucide-react';
 
@@ -30,17 +32,57 @@ interface DashboardLayoutProps {
   activeMenu?: string;
 }
 
+interface SubMenuItem {
+  name: string;
+  icon: React.ElementType;
+  path: string;
+  color: string;
+}
+
+interface MenuItem {
+  name: string;
+  icon: React.ElementType;
+  path?: string;
+  color: string;
+  badge?: string;
+  hasSub?: boolean;
+  subItems?: SubMenuItem[];
+}
+
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [showWhatsAppFloat, setShowWhatsAppFloat] = useState(true);
+  
+  // Responsive sidebar state: open by default on desktop (>=768px), closed on mobile (<768px)
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
+  const [openSubMenus, setOpenSubMenus] = useState<Record<string, boolean>>({});
+
+  // Auto-close sidebar drawer on mobile route change
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
+  }, [location.pathname]);
+
+  // Sync sidebar state on window resize
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768) {
+        setSidebarOpen(true);
+      } else {
+        setSidebarOpen(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const getRoleDisplayName = () => {
     switch (user?.role) {
       case 'super_admin':
         return 'Admin';
+      case 'sub_admin':
+        return 'Sub Admin';
       case 'manager':
         return 'Manager';
       case 'distributor':
@@ -52,15 +94,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         return 'Retailer';
     }
   };
-
-  interface MenuItem {
-    name: string;
-    icon: React.ElementType;
-    path: string;
-    color: string;
-    badge?: string;
-    hasSub?: boolean;
-  }
 
   const getMenuItems = (): MenuItem[] => {
     if (user?.role === 'distributor') {
@@ -74,20 +107,57 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
       ];
     }
 
-    if (user?.role === 'super_admin' || user?.role === 'manager') {
-      const basePath = user?.role === 'super_admin' ? '/admin' : '/manager';
+    if (user?.role === 'operator') {
+      return [
+        { name: 'Dashboard', icon: Home, path: '/operator/dashboard', color: 'text-blue-600' },
+        { name: 'Service Requests', icon: Layers, path: '/operator/service-requests', color: 'text-indigo-600' },
+        { name: 'Wallet Management', icon: Wallet, path: '/operator/wallet', color: 'text-emerald-600' },
+        { name: 'Complaint', icon: Headphones, path: '/operator/complaints', color: 'text-red-600' },
+        { name: 'My Profile', icon: User, path: '/distributor/profile', color: 'text-purple-600' }
+      ];
+    }
+
+    if (user?.role === 'manager') {
+      return [
+        { name: 'Dashboard', icon: Home, path: '/manager/dashboard', color: 'text-blue-600' },
+        { name: 'Services Management', icon: Layers, path: '/manager/services', color: 'text-violet-600' },
+        { name: 'Shop Management', icon: Store, path: '/manager/shops', color: 'text-blue-600' },
+        { name: 'Operator Management', icon: UserCheck, path: '/manager/operators', color: 'text-teal-600' },
+        { name: 'Task Verification', icon: UserCheck, path: '/manager/task-verification', color: 'text-indigo-600' },
+        { name: 'Operator Withdrawal Request', icon: Wallet, path: '/manager/withdrawal-requests', color: 'text-emerald-600' },
+        { name: 'Complaint', icon: Headphones, path: '/manager/complaints', color: 'text-red-600' },
+        { name: 'My Profile', icon: User, path: '/distributor/profile', color: 'text-purple-600' }
+      ];
+    }
+
+    if (user?.role === 'super_admin' || user?.role === 'sub_admin') {
+      const basePath = '/admin';
       return [
         { name: 'Dashboard', icon: Home, path: `${basePath}/dashboard`, color: 'text-blue-600' },
-        { name: 'Shop Management', icon: Store, path: '/admin/shops', color: 'text-blue-600' },
-        { name: 'Services Management', icon: Layers, path: '/admin/services', color: 'text-indigo-600' },
-        { name: 'Wallet Management', icon: Wallet, path: '/admin/wallet', color: 'text-emerald-600' },
-        { name: 'Complaint', icon: Headphones, path: `${basePath}/complaints`, color: 'text-red-600' }
+        {
+          name: 'User Management',
+          icon: Users,
+          color: 'text-indigo-600',
+          subItems: [
+            { name: 'Shop Management', icon: Store, path: `${basePath}/shops`, color: 'text-blue-600' },
+            { name: 'Operator Management', icon: UserCheck, path: `${basePath}/operators`, color: 'text-teal-600' },
+            { name: 'Staff Management', icon: UserCog, path: `${basePath}/users`, color: 'text-indigo-600' }
+          ]
+        },
+        { name: 'Services Management', icon: Layers, path: `${basePath}/services`, color: 'text-violet-600' },
+        { name: 'Commission Reports', icon: Percent, path: `${basePath}/commissions`, color: 'text-emerald-600' },
+        { name: 'Task Verification', icon: UserCheck, path: `${basePath}/task-verification`, color: 'text-indigo-600' },
+        { name: 'Operator Withdrawal Request', icon: Wallet, path: `${basePath}/withdrawal-requests`, color: 'text-teal-600' },
+        { name: 'Wallet Management', icon: Wallet, path: `${basePath}/wallet`, color: 'text-emerald-600' },
+        { name: 'Complaint', icon: Headphones, path: `${basePath}/complaints`, color: 'text-red-600' },
+        { name: 'Settings', icon: Settings, path: `${basePath}/settings`, color: 'text-slate-600' }
       ];
     }
 
     return [
       { name: 'Dashboard', icon: Home, path: '/agent/dashboard', color: 'text-blue-600' },
       { name: 'Services', icon: Layers, path: '/agent/services', color: 'text-indigo-600' },
+      { name: 'Applied Services', icon: FileCheck, path: '/agent/my-requests', color: 'text-blue-600' },
       { name: 'Wallet Manage', icon: Wallet, path: '/agent/wallet', color: 'text-emerald-600' },
       { name: 'Complaint', icon: Headphones, path: '/agent/complaint', color: 'text-red-600' },
       { name: 'My Profile', icon: User, path: '/agent/profile', color: 'text-purple-600' },
@@ -98,33 +168,46 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
   const menuItems = getMenuItems();
 
   return (
-    <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-[#f4f6f9] text-slate-800'} font-sans flex flex-col`}>
-      {/* 1. Top Blue Brand Header Navbar (Exact Citizen Center Online Blue) */}
-      <header className="sticky top-0 z-40 bg-[#1565c0] text-white shadow-sm px-3 sm:px-5 py-2 flex items-center justify-between">
-        {/* Left: Hamburger & Brand Logo */}
+    <div className="min-h-screen bg-[#f4f6f9] text-slate-800 font-sans flex flex-col">
+      
+      {/* 1. Top Sticky Brand Navbar Header */}
+      <header className="sticky top-0 z-40 bg-[#1565c0] text-white shadow-md px-3 sm:px-5 py-2.5 flex items-center justify-between h-14">
+        {/* Left: Mobile Toggle & Brand Logo */}
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1 rounded text-white hover:bg-blue-700/60 transition-colors focus:outline-none"
+            onClick={() => setSidebarOpen(prev => !prev)}
+            className="p-1.5 rounded-lg text-white hover:bg-white/15 transition-colors focus:outline-none cursor-pointer"
             title="Toggle Menu"
           >
-            <Menu className="h-6 w-6" />
+            <Menu className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
 
-          <Link to="/" className="flex items-center gap-2.5">
-            {/* Citizen Center Round Logo */}
-            <div className="h-9 w-9 rounded-full bg-white flex items-center justify-center p-1 shadow-sm border border-blue-200 shrink-0">
-              <div className="h-full w-full rounded-full bg-gradient-to-tr from-orange-500 via-amber-400 to-emerald-500 flex items-center justify-center">
-                <span className="text-[10px] font-black tracking-tighter text-blue-950">CC</span>
+          <Link to="/" className="flex items-center gap-2.5 group">
+            {/* Glowing Emblem Icon */}
+            <div className="relative shrink-0">
+              <div className="absolute -inset-0.5 bg-gradient-to-r from-amber-400 via-orange-500 to-emerald-400 rounded-xl blur-xs opacity-80 group-hover:opacity-100 transition duration-300" />
+              <div className="relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-slate-950 border border-white/20 flex items-center justify-center shadow-lg">
+                <span className="text-xs sm:text-sm font-black bg-gradient-to-br from-amber-300 via-orange-400 to-emerald-300 bg-clip-text text-transparent tracking-tighter">
+                  V2
+                </span>
               </div>
             </div>
-            
-            <div className="leading-tight select-none">
-              <div className="text-[17px] font-black tracking-wide text-[#ff9800] uppercase drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]">
-                CITIZEN <span className="text-[#ffb74d]">CENTER</span>
+
+            {/* Text Brand */}
+            <div className="leading-none select-none">
+              <div className="flex items-center gap-1.5">
+                <span className="text-base sm:text-lg font-black tracking-tight text-white drop-shadow-sm">
+                  V2
+                </span>
+                <span className="text-base sm:text-lg font-black tracking-wider bg-gradient-to-r from-amber-300 via-orange-400 to-amber-200 bg-clip-text text-transparent uppercase drop-shadow-xs">
+                  ONLINE
+                </span>
               </div>
-              <div className="inline-block bg-[#e53935] text-white text-[9px] font-extrabold tracking-widest px-2 py-0.2 rounded-xs uppercase">
-                ONLINE
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="inline-flex items-center gap-1 bg-white/15 text-amber-300 text-[8px] sm:text-[9px] font-extrabold tracking-widest px-2 py-0.5 rounded-full border border-white/20 backdrop-blur-xs uppercase">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>SERVICES PORTAL</span>
+                </span>
               </div>
             </div>
           </Link>
@@ -132,96 +215,150 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
         {/* Right: User Profile Avatar & Retailer Wallet */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Black Wallet Box & Upgrade ID Pill (Only for Retailer / Agent role) */}
           {(!user?.role || user?.role === 'agent') && (
-            <>
-              <div className="flex items-center gap-1.5 bg-[#212529] px-2.5 py-1.5 rounded text-xs font-bold text-white shadow-inner">
-                <Wallet className="h-3.5 w-3.5 text-slate-200" />
-                <span>{(user?.wallet_balance || 0).toFixed(0)}</span>
-              </div>
-
-              <button className="flex items-center gap-1.5 bg-[#e91e63] hover:bg-[#d81b60] text-white text-xs font-bold px-3.5 py-1.5 rounded-full shadow transition-transform hover:scale-105">
-                <PlusCircle className="h-3.5 w-3.5" />
-                <span>Upgrade ID</span>
-              </button>
-            </>
+            <div className="flex items-center gap-1.5 bg-slate-900/90 border border-white/10 px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-inner">
+              <Wallet className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="font-mono text-emerald-400 font-extrabold">₹{(user?.wallet_balance || 0).toFixed(0)}</span>
+            </div>
           )}
 
           {/* User Profile Avatar */}
           <div className="flex items-center gap-2 pl-1 sm:pl-2">
-            <div className="h-8 w-8 rounded-full bg-white/20 flex items-center justify-center text-white text-xs font-bold border border-white/40">
+            <div className="h-8 w-8 rounded-full bg-white/20 flex items-center justify-center text-white text-xs font-bold border border-white/40 shadow-xs">
               <User className="h-4 w-4 text-white" />
             </div>
             <div className="hidden sm:block text-left leading-none">
-              <p className="text-xs font-bold text-white">{user?.full_name || 'vijay'}</p>
-              <p className="text-[10px] text-blue-100 font-medium mt-0.5">{getRoleDisplayName()}</p>
+              <p className="text-xs font-bold text-white truncate max-w-[120px]">{user?.full_name || 'Retailer'}</p>
+              <p className="text-[10px] text-blue-200 font-medium mt-0.5">{getRoleDisplayName()}</p>
             </div>
           </div>
         </div>
       </header>
 
-      {/* 2. Main Body with Sidebar & Content */}
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Left White Sidebar */}
+      {/* 2. Main Body with Sticky Sidebar & Scrollable Content */}
+      <div className="flex flex-1 min-h-[calc(100vh-56px)] relative">
+        
+        {/* Mobile Backdrop Overlay */}
+        {sidebarOpen && (
+          <div
+            onClick={() => setSidebarOpen(false)}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-40 md:hidden transition-opacity"
+          />
+        )}
+
+        {/* Sticky Desktop & Slide-in Mobile Sidebar */}
         <aside
-          className={`${
-            sidebarOpen ? 'w-56' : 'w-0 -translate-x-full md:w-14 md:translate-x-0'
-          } ${
-            isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-          } border-r transition-all duration-200 flex flex-col shrink-0 z-30 overflow-y-auto select-none`}
+          className={`
+            fixed md:sticky top-14 left-0 z-50 md:z-30
+            h-[calc(100vh-56px)] 
+            ${sidebarOpen ? 'w-64 translate-x-0' : '-translate-x-full md:translate-x-0 md:w-16'}
+            bg-white border-r border-slate-200
+            transition-all duration-300 ease-in-out
+            flex flex-col justify-between shrink-0 select-none shadow-xl md:shadow-none
+          `}
         >
-          <div className="py-2 flex-1">
+          {/* Mobile Close Bar */}
+          <div className="md:hidden flex items-center justify-between p-3 border-b border-slate-100 bg-slate-50">
+            <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">Navigation Menu</span>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="p-1 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Scrollable Navigation Menu Items */}
+          <div className="p-2.5 flex-1 overflow-y-auto space-y-1">
             {menuItems.map((item, index) => {
-              const isActive = location.pathname === item.path || (index === 0 && location.pathname.includes('dashboard'));
               const Icon = item.icon;
-              const isHashLink = item.path.startsWith('#');
 
-              if (isHashLink) {
+              // Handle subItems (Accordion)
+              if (item.subItems) {
+                const isAnyChildActive = item.subItems.some(sub => location.pathname === sub.path);
+                const isMenuOpen = openSubMenus[item.name] !== undefined ? openSubMenus[item.name] : isAnyChildActive;
+
+                const handleToggleMenu = (e: React.MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setOpenSubMenus(prev => ({
+                    ...prev,
+                    [item.name]: !isMenuOpen
+                  }));
+                };
+
                 return (
-                  <button
-                    key={item.name}
-                    onClick={(e) => e.preventDefault()}
-                    className={`w-full flex items-center justify-between px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer text-left ${
-                      isDarkMode
-                        ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                        : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Icon className={`h-4 w-4 ${item.color}`} />
-                      {sidebarOpen && <span className="truncate">{item.name}</span>}
-                    </div>
+                  <div key={item.name} className="flex flex-col">
+                    <button
+                      type="button"
+                      onClick={handleToggleMenu}
+                      className={`w-full flex items-center justify-between px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition-all cursor-pointer text-left ${
+                        isAnyChildActive
+                          ? 'text-[#1565c0] font-bold bg-blue-50/90 border-l-4 border-[#1565c0] rounded-l-none'
+                          : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-900'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Icon className={`h-4.5 w-4.5 sm:h-5 sm:w-5 shrink-0 ${isAnyChildActive ? 'text-[#1565c0]' : item.color}`} />
+                        {sidebarOpen && <span className="truncate">{item.name}</span>}
+                      </div>
 
-                    {sidebarOpen && item.badge && (
-                      <div className="flex items-center gap-1">
-                        <span className="bg-[#e8f5e9] text-[#2e7d32] border border-[#c8e6c9] text-[10px] font-bold px-1.5 py-0.2 rounded">
-                          {item.badge}
-                        </span>
-                        {item.hasSub && <ChevronRight className="h-3 w-3 text-slate-400" />}
+                      {sidebarOpen && (
+                        <ChevronDown
+                          className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${
+                            isMenuOpen ? 'rotate-180' : ''
+                          }`}
+                        />
+                      )}
+                    </button>
+
+                    {/* Sub Menu Dropdown items */}
+                    {sidebarOpen && isMenuOpen && (
+                      <div className="bg-slate-50/90 border-y border-slate-100 my-1 py-1 px-1 rounded-xl space-y-0.5">
+                        {item.subItems.map(sub => {
+                          const isChildActive = location.pathname === sub.path;
+                          const SubIcon = sub.icon;
+                          return (
+                            <Link
+                              key={sub.name}
+                              to={sub.path}
+                              onClick={() => {
+                                if (window.innerWidth < 768) setSidebarOpen(false);
+                              }}
+                              className={`flex items-center gap-2.5 pl-8 pr-3 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all ${
+                                isChildActive
+                                  ? 'text-[#1565c0] font-bold bg-blue-100/80 border-l-2 border-[#1565c0]'
+                                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                              }`}
+                            >
+                              <SubIcon className={`h-4 w-4 shrink-0 ${isChildActive ? 'text-[#1565c0]' : sub.color}`} />
+                              <span className="truncate">{sub.name}</span>
+                            </Link>
+                          );
+                        })}
                       </div>
                     )}
-
-                    {sidebarOpen && item.hasSub && !item.badge && (
-                      <ChevronRight className="h-3 w-3 text-slate-400" />
-                    )}
-                  </button>
+                  </div>
                 );
               }
+
+              const isActive = item.path ? location.pathname === item.path || (index === 0 && location.pathname.includes('dashboard')) : false;
 
               return (
                 <Link
                   key={item.name}
-                  to={item.path}
-                  className={`flex items-center justify-between px-4 py-2.5 text-xs font-medium transition-colors ${
+                  to={item.path || '#'}
+                  onClick={() => {
+                    if (window.innerWidth < 768) setSidebarOpen(false);
+                  }}
+                  className={`flex items-center justify-between px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
                     isActive
-                      ? 'text-[#1565c0] font-bold bg-blue-50/70 border-l-4 border-[#1565c0]'
-                      : isDarkMode
-                      ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                      ? 'text-[#1565c0] font-bold bg-blue-50/90 border-l-4 border-[#1565c0] rounded-l-none'
+                      : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-900'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <Icon className={`h-4 w-4 ${isActive ? 'text-[#1565c0]' : item.color}`} />
+                    <Icon className={`h-4.5 w-4.5 sm:h-5 sm:w-5 shrink-0 ${isActive ? 'text-[#1565c0]' : item.color}`} />
                     {sidebarOpen && <span className="truncate">{item.name}</span>}
                   </div>
 
@@ -230,79 +367,39 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                       <span className="bg-[#e8f5e9] text-[#2e7d32] border border-[#c8e6c9] text-[10px] font-bold px-1.5 py-0.2 rounded">
                         {item.badge}
                       </span>
-                      {item.hasSub && <ChevronRight className="h-3 w-3 text-slate-400" />}
+                      {item.hasSub && <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
                     </div>
                   )}
 
                   {sidebarOpen && item.hasSub && !item.badge && (
-                    <ChevronRight className="h-3 w-3 text-slate-400" />
+                    <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
                   )}
                 </Link>
               );
             })}
-
-            {/* Logout Item */}
-            <button
-              onClick={logout}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 transition-colors text-left`}
-            >
-              <LogOut className="h-4 w-4 text-slate-400 group-hover:text-red-600" />
-              {sidebarOpen && <span>Logout</span>}
-            </button>
           </div>
 
-          {/* Bottom Dark Mode Switch */}
-          {sidebarOpen && (
-            <div className="p-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                onClick={() => setIsDarkMode(!isDarkMode)}
-                className="w-full flex items-center justify-between text-xs font-semibold text-blue-700 hover:text-blue-800 p-1.5 rounded transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <span>Night mode</span>
-                  {isDarkMode ? <Sun className="h-3.5 w-3.5 text-amber-500" /> : <Moon className="h-3.5 w-3.5 text-blue-600 fill-blue-600" />}
-                </div>
-              </button>
-            </div>
-          )}
+          {/* Sticky Bottom Footer: Logout */}
+          <div className="p-3 border-t border-slate-200/80 bg-slate-50/80 shrink-0">
+            <button
+              onClick={logout}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs sm:text-sm font-bold text-rose-700 bg-rose-50 hover:bg-rose-600 hover:text-white rounded-xl border border-rose-200/80 transition-all duration-200 group cursor-pointer shadow-xs"
+            >
+              <div className="flex items-center gap-3">
+                <LogOut className="h-4.5 w-4.5 sm:h-5 sm:w-5 text-rose-600 group-hover:text-white transition-colors shrink-0" />
+                {sidebarOpen && <span>Logout</span>}
+              </div>
+              {sidebarOpen && <ChevronRight className="h-4 w-4 text-rose-400 group-hover:text-white transition-colors" />}
+            </button>
+          </div>
         </aside>
 
-        {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
+        {/* Main Content View */}
+        <main className="flex-1 w-full min-w-0 p-3 sm:p-5 lg:p-6 overflow-x-hidden">
           {children}
         </main>
       </div>
 
-      {/* 3. Floating Bottom-Right WhatsApp Channel Widget (Exact as in Screenshot) */}
-      {showWhatsAppFloat && (
-        <div className="fixed bottom-4 right-4 z-50 bg-[#25d366] text-white rounded-xl p-3 shadow-2xl flex items-center gap-2.5 max-w-xs animate-in fade-in duration-300">
-          <div className="h-8 w-8 rounded-full bg-white flex items-center justify-center text-[#25d366] shrink-0 shadow">
-            <MessageCircle className="h-5 w-5 fill-current" />
-          </div>
-          <div className="text-left leading-tight">
-            <div className="flex items-center gap-1 font-bold text-xs">
-              <span>📢 Join Our Channel</span>
-            </div>
-            <p className="text-[10px] text-white/90 mt-0.5">Instant updates & offers</p>
-            <a
-              href="https://whatsapp.com"
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1 inline-flex items-center gap-1 bg-white text-[#25d366] font-bold text-[10px] px-3 py-0.5 rounded-full shadow-sm hover:bg-slate-50"
-            >
-              <MessageCircle className="h-3 w-3 fill-current" />
-              <span>Join</span>
-            </a>
-          </div>
-          <button
-            onClick={() => setShowWhatsAppFloat(false)}
-            className="text-white/80 hover:text-white ml-1 p-0.5 self-start"
-            title="Close"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
     </div>
   );
 };

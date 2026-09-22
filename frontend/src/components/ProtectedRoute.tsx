@@ -31,6 +31,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowe
     // Redirect to user's authorized role home
     const roleRoutes: Record<UserRole, string> = {
       super_admin: '/admin/dashboard',
+      sub_admin: '/admin/dashboard',
       manager: '/manager/dashboard',
       distributor: '/distributor/dashboard',
       operator: '/operator/dashboard',

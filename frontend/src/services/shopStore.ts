@@ -14,6 +14,8 @@ export interface Shop {
   deleteReason?: string;
   registrationType: 'SELF_REGISTER' | 'DISTRIBUTOR_ADDED';
   createdAt: string;
+  requestedAt?: string;
+  approvedAt?: string;
 }
 
 const STORAGE_KEY = 'v2online_shops_db';
@@ -86,6 +88,7 @@ class ShopStoreService {
     address: string;
   }): Shop {
     const year = new Date().getFullYear();
+    const nowStr = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
     const newShop: Shop = {
       id: Date.now().toString(),
       shopCode: `SHOP-${year}-${1000 + this.shops.length + 1}`,
@@ -97,7 +100,8 @@ class ShopStoreService {
       address: data.address,
       status: 'PENDING',
       registrationType: 'SELF_REGISTER',
-      createdAt: 'Just Now'
+      createdAt: nowStr,
+      requestedAt: nowStr
     };
 
     this.shops.unshift(newShop);
@@ -105,8 +109,8 @@ class ShopStoreService {
     return newShop;
   }
 
-  // Distributor Add New Shop Modal -> ACTIVE
-  public addActiveShopByDistributor(data: {
+  // Distributor Add New Shop Modal -> ACTIVE (API-first)
+  public async addActiveShopByDistributor(data: {
     ownerName: string;
     shopName: string;
     mobile: string;
@@ -114,8 +118,33 @@ class ShopStoreService {
     aadhaar: string;
     address: string;
     password: string;
-  }): Shop {
+  }): Promise<Shop> {
+    // Call API first to create in database
+    try {
+      const response = await apiClient.post('/shops', {
+        ownerName: data.ownerName,
+        shopName: data.shopName,
+        mobile: data.mobile,
+        email: data.email,
+        aadhaar: data.aadhaar,
+        address: data.address,
+        password: data.password
+      });
+
+      // Re-sync from backend
+      await this.syncBackend();
+
+      if (response.data.status === 'success' && response.data.data) {
+        const shop = this.shops.find(s => s.shopCode === response.data.data.shopCode);
+        if (shop) return shop;
+      }
+    } catch (e) {
+      console.error('Failed to add shop via API:', e);
+    }
+
+    // Fallback: add locally
     const year = new Date().getFullYear();
+    const nowStr = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
     const shopCode = `SHOP-${year}-${1000 + this.shops.length + 1}`;
     const newShop: Shop = {
       id: Date.now().toString(),
@@ -129,33 +158,22 @@ class ShopStoreService {
       password: data.password,
       status: 'ACTIVE',
       registrationType: 'DISTRIBUTOR_ADDED',
-      createdAt: 'Just Now'
+      createdAt: nowStr,
+      requestedAt: nowStr,
+      approvedAt: nowStr
     };
 
     this.shops.unshift(newShop);
     this.saveToStorage();
-
-    // Async sync to backend API and re-fetch DB list
-    apiClient.post('/shops', {
-      ownerName: data.ownerName,
-      shopName: data.shopName,
-      mobile: data.mobile,
-      email: data.email,
-      aadhaar: data.aadhaar,
-      address: data.address,
-      password: data.password
-    }).then(() => {
-      this.syncBackend();
-    }).catch(() => {});
-
     return newShop;
   }
 
   // Approve Pending Shop
   public approveShop(shopId: string) {
+    const nowStr = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
     this.shops = this.shops.map(s => {
       if (s.id === shopId) {
-        return { ...s, status: 'ACTIVE' };
+        return { ...s, status: 'ACTIVE', approvedAt: nowStr };
       }
       return s;
     });
@@ -209,28 +227,6 @@ class ShopStoreService {
     apiClient.patch(`/shops/${shopId}/approve-deletion`).then(() => {
       this.syncBackend();
     }).catch(() => {});
-  }
-
-  // Check login credentials for any dynamically added shop
-  public authenticateShop(mobile: string, password: string): { success: boolean; shop?: Shop; message?: string } {
-    const shop = this.shops.find(s => s.mobile === mobile.trim());
-    if (!shop) {
-      return { success: false, message: 'Ye mobile number registered nahi hai.' };
-    }
-
-    if (shop.status === 'INACTIVE') {
-      return { success: false, message: 'Aapka shop account deactivate / block ho gaya hai. Login rejected.' };
-    }
-
-    if (shop.status === 'PENDING') {
-      return { success: false, message: 'Aapka shop account approval ke liye pending hai.' };
-    }
-
-    if (shop.password && shop.password !== password) {
-      return { success: false, message: 'Galat Password enter kiya gaya hai.' };
-    }
-
-    return { success: true, shop };
   }
 }
 

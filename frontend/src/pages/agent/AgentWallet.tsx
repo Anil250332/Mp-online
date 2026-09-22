@@ -178,15 +178,28 @@ export default function AgentWallet() {
                     </td>
                   </tr>
                 ) : (
-                  filteredTxns.map((txn) => (
-                    <tr key={txn.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <span className="font-mono font-bold text-blue-700 text-xs block">{txn.txnNo}</span>
-                        <span className="font-bold text-slate-900">{txn.remarks}</span>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5 font-semibold">
-                          Category: {txn.category.replace('_', ' ')}
-                        </div>
-                      </td>
+                    filteredTxns.map((txn) => {
+                      const displayAppId = txn.appId || (txn.remarks ? (txn.remarks.match(/\[(?:App|Task)\s*ID:\s*([^\]]+)\]/i)?.[1] || txn.remarks.match(/(TSK-\d{4}-\d{4})/i)?.[1]) : null);
+                      const finalAppId = displayAppId || ((txn.category === 'service_fee' || txn.category === 'refund') ? `TSK-2026-${txn.txnNo.split('-').pop()}` : null);
+                      const cleanRemarks = txn.remarks ? txn.remarks.replace(/\s*\[(?:App|Task)\s*ID:\s*[^\]]+\]/gi, '').trim() : '';
+
+                      return (
+                        <tr key={txn.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3.5 px-4 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono font-bold text-blue-700 text-xs">{txn.txnNo}</span>
+                              {finalAppId && (
+                                <span className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono text-[10px] font-extrabold px-2.5 py-0.5 rounded-md shadow-2xs">
+                                  <span className="text-indigo-400 font-sans text-[10px] font-semibold uppercase">App ID:</span>
+                                  <span className="text-indigo-900">{finalAppId}</span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-bold text-slate-900 text-xs sm:text-sm">{cleanRemarks}</div>
+                            <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                              Category: {txn.category.replace('_', ' ')}
+                            </div>
+                          </td>
 
                       <td className="py-3.5 px-4 text-center">
                         <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
@@ -220,8 +233,9 @@ export default function AgentWallet() {
                         </span>
                       </td>
                     </tr>
-                  ))
-                )}
+                  );
+                })
+              )}
               </tbody>
             </table>
           </div>

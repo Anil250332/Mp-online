@@ -13,7 +13,11 @@ import {
   CheckCircle2,
   AlertCircle,
   KeyRound,
-  RotateCcw
+  RotateCcw,
+  Building,
+  MapPin,
+  Hash,
+  Award
 } from 'lucide-react';
 
 export const RegisterPage: React.FC = () => {
@@ -27,6 +31,10 @@ export const RegisterPage: React.FC = () => {
   const [fullName, setFullName] = useState('');
   const [mobile, setMobile] = useState('');
   const [shopName, setShopName] = useState('');
+  const [officeName, setOfficeName] = useState('');
+  const [designation, setDesignation] = useState('');
+  const [wardNumber, setWardNumber] = useState('');
+  const [area, setArea] = useState('');
   const [email, setEmail] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [address, setAddress] = useState('');
@@ -51,6 +59,11 @@ export const RegisterPage: React.FC = () => {
       return;
     }
 
+    if (role === 'operator' && !officeName) {
+      setErrorMessage('Office / Department Name enter karna zaroori hai.');
+      return;
+    }
+
     setIsLoading(true);
     try {
       const response = await apiClient.post('/auth/register-otp', {
@@ -58,6 +71,10 @@ export const RegisterPage: React.FC = () => {
         full_name: fullName,
         mobile,
         shop_name: shopName,
+        office_name: officeName,
+        designation,
+        ward_no: wardNumber,
+        area,
         email,
         aadhaar_number: aadhaarNumber,
         address
@@ -130,13 +147,28 @@ export const RegisterPage: React.FC = () => {
     <div className="min-h-screen bg-[#f4f7fb] flex flex-col justify-between font-sans">
       {/* Top Header Bar */}
       <header className="bg-[#1d4ed8] text-white shadow-md px-4 sm:px-8 py-3 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-amber-400 to-orange-500 flex items-center justify-center shadow-inner border border-white/20">
-            <span className="text-xs font-black text-blue-950">V2</span>
+        <Link to="/" className="flex items-center gap-3 group">
+          <div className="relative shrink-0">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-amber-400 via-orange-500 to-emerald-400 rounded-xl blur-xs opacity-80 group-hover:opacity-100 transition duration-300"></div>
+            <div className="relative h-10 w-10 rounded-xl bg-slate-950 border border-white/20 flex items-center justify-center shadow-lg">
+              <span className="text-sm font-black bg-gradient-to-br from-amber-300 via-orange-400 to-emerald-300 bg-clip-text text-transparent tracking-tighter">
+                V2
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-base font-black tracking-tight text-white uppercase">CITIZEN CENTER</span>
-            <p className="text-[10px] font-bold text-amber-300 tracking-widest uppercase -mt-0.5">ONLINE PORTAL</p>
+          <div className="leading-none select-none">
+            <div className="flex items-center gap-1.5">
+              <span className="text-lg font-black tracking-tight text-white drop-shadow-sm">V2</span>
+              <span className="text-lg font-black tracking-wider bg-gradient-to-r from-amber-300 via-orange-400 to-amber-200 bg-clip-text text-transparent uppercase drop-shadow-xs">
+                ONLINE
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="inline-flex items-center gap-1 bg-white/15 text-amber-300 text-[9px] font-extrabold tracking-widest px-2 py-0.5 rounded-full border border-white/20 backdrop-blur-xs uppercase">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>SERVICES PORTAL</span>
+              </span>
+            </div>
           </div>
         </Link>
 
@@ -202,16 +234,16 @@ export const RegisterPage: React.FC = () => {
 
                 <form onSubmit={handleRequestOtp} className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {/* Owner Full Name */}
+                    {/* Full Name */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Owner Full Name *
+                        {role === 'operator' ? 'Operator Full Name *' : 'Owner Full Name *'}
                       </label>
                       <div className="relative">
                         <UserIcon className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
                         <input
                           type="text"
-                          placeholder="Owner / Full Name"
+                          placeholder={role === 'operator' ? 'Operator Name' : 'Owner / Full Name'}
                           value={fullName}
                           onChange={(e) => setFullName(e.target.value)}
                           className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
@@ -240,7 +272,7 @@ export const RegisterPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {role === 'agent' && (
+                  {role === 'agent' ? (
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                         Shop / Kiosk Center Name *
@@ -255,6 +287,44 @@ export const RegisterPage: React.FC = () => {
                           className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
                           required
                         />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Designation */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Designation / Post *
+                        </label>
+                        <div className="relative">
+                          <Award className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="e.g. Senior Operator / Clerk"
+                            value={designation}
+                            onChange={(e) => setDesignation(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      {/* Office Name */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Office / Department Name *
+                        </label>
+                        <div className="relative">
+                          <Building className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="e.g. District E-Governance Office"
+                            value={officeName}
+                            onChange={(e) => setOfficeName(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
+                            required
+                          />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -292,6 +362,44 @@ export const RegisterPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                  {role === 'operator' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Ward Number */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Ward Number
+                        </label>
+                        <div className="relative">
+                          <Hash className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Ward / Block No."
+                            value={wardNumber}
+                            onChange={(e) => setWardNumber(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Area / Location */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Area / Tehsil
+                        </label>
+                        <div className="relative">
+                          <MapPin className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Area / Tehsil Name"
+                            value={area}
+                            onChange={(e) => setArea(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">

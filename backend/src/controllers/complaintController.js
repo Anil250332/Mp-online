@@ -11,13 +11,13 @@ export const getComplaints = async (req, res) => {
     let query = `
       SELECT c.id, c.ticket_no as ticketNo, c.subject, c.description,
              c.status, c.resolution_note as resolutionNote, c.created_at as createdAt,
-             u.full_name as raisedByName, u.role as raisedByRole
+             u.full_name as raisedByName, u.role as raisedByRole, c.raised_by as raisedByUserId
       FROM complaints c
       LEFT JOIN users u ON c.raised_by = u.id
     `;
 
     const params = [];
-    if (userId && req.user?.role !== 'super_admin' && req.user?.role !== 'manager') {
+    if (userId && req.user?.role !== 'super_admin' && req.user?.role !== 'sub_admin' && req.user?.role !== 'manager') {
       query += ' WHERE c.raised_by = ?';
       params.push(userId);
     }
@@ -38,6 +38,7 @@ export const getComplaints = async (req, res) => {
       return {
         id: r.id.toString(),
         ticketNo: r.ticketNo,
+        raisedByUserId: r.raisedByUserId ? r.raisedByUserId.toString() : undefined,
         subject: r.subject,
         category: parsedCategory,
         description: cleanDescription,

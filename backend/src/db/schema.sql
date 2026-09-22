@@ -7,7 +7,7 @@ USE v2online_portal;
 CREATE TABLE IF NOT EXISTS users (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     uuid VARCHAR(36) UNIQUE NOT NULL,
-    role ENUM('super_admin', 'manager', 'distributor', 'operator', 'agent') NOT NULL,
+    role ENUM('super_admin', 'sub_admin', 'manager', 'distributor', 'operator', 'agent') NOT NULL,
     full_name VARCHAR(100) NOT NULL,
     mobile VARCHAR(15) UNIQUE NOT NULL,
     email VARCHAR(100) NULL,

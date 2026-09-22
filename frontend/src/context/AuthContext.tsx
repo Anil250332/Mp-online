@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { User } from '../types/auth';
 import apiClient from '../api/client';
-import { shopStore } from '../services/shopStore';
+import { walletStore } from '../services/walletStore';
+import { complaintStore } from '../services/complaintStore';
 
 interface AuthContextType {
   user: User | null;
@@ -33,6 +34,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (response.data.status === 'success') {
         setUser(response.data.user);
         localStorage.setItem('v2online_user', JSON.stringify(response.data.user));
+        // Sync stores with authenticated user
+        if (response.data.user?.id) {
+          walletStore.setUser(response.data.user.id);
+          complaintStore.setUser(response.data.user.id);
+        }
       }
     } catch (error) {
       console.error('Failed to refresh user profile', error);
@@ -46,32 +52,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (mobile: string, password: string) => {
-    // 1. First check dynamic shopStore authentication
-    const shopAuth = shopStore.authenticateShop(mobile, password);
-    if (shopAuth.success && shopAuth.shop) {
-      const dynamicUser: User = {
-        id: 9900 + parseInt(shopAuth.shop.id.slice(-4) || '1'),
-        uuid: shopAuth.shop.id,
-        role: 'agent',
-        full_name: shopAuth.shop.ownerName,
-        mobile: shopAuth.shop.mobile,
-        email: shopAuth.shop.email,
-        shop_name: shopAuth.shop.shopName,
-        wallet_balance: 500
-      };
-      const mockToken = 'mock_jwt_token_' + Date.now();
-      setToken(mockToken);
-      setUser(dynamicUser);
-      localStorage.setItem('v2online_token', mockToken);
-      localStorage.setItem('v2online_user', JSON.stringify(dynamicUser));
-      return { success: true, message: `Swagat hai, ${dynamicUser.full_name}!`, redirectUrl: '/agent/dashboard' };
-    }
-
-    if (!shopAuth.success && shopAuth.message && shopAuth.message.includes('deactivate')) {
-      return { success: false, message: shopAuth.message };
-    }
-
-    // 2. Fallback to API endpoint
+    // All authentication goes through the real backend API
     try {
       const response = await apiClient.post('/auth/login', { mobile, password });
       if (response.data.status === 'success') {
@@ -80,11 +61,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(receivedUser);
         localStorage.setItem('v2online_token', receivedToken);
         localStorage.setItem('v2online_user', JSON.stringify(receivedUser));
+
+        // Initialize stores with the authenticated user's data
+        if (receivedUser?.id) {
+          walletStore.setUser(receivedUser.id);
+          complaintStore.setUser(receivedUser.id);
+        }
+
         return { success: true, message: response.data.message, redirectUrl: redirect_url };
       }
       return { success: false, message: response.data.message || 'Login failed' };
     } catch (error: any) {
-      const msg = error.response?.data?.message || shopAuth.message || 'Login request failed';
+      const msg = error.response?.data?.message || 'Login request failed. Check server connection.';
       return { success: false, message: msg };
     }
   };
@@ -95,6 +83,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error('Logout error', error);
     } finally {
+      // Clear stores
+      walletStore.clearUser();
+      complaintStore.clearUser();
+
       setUser(null);
       setToken(null);
       localStorage.removeItem('v2online_token');

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   User, 
   Phone, 
@@ -6,33 +6,51 @@ import {
   ShieldCheck, 
   Key, 
   CheckCircle2, 
-  Lock
+  Lock,
+  AlertCircle
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../context/AuthContext';
+import apiClient from '../../api/client';
 
 export default function DistributorProfile() {
-  // Static profile state
-  const [profile] = useState({
-    name: 'Rajesh Sharma',
-    distributorId: 'DIST-MP-48201',
-    mobile: '+91 98260 12345',
-    email: 'rajesh.sharma@mponline.gov.in',
-    district: 'Bhopal',
-    tehsil: 'Huzur',
+  const { user } = useAuth();
+
+  // Dynamic system settings (Helpline & Support Email)
+  const [supportInfo, setSupportInfo] = useState({
+    helplineNumber: '+91 0755 2700800',
+    supportEmail: 'distributor-help@mponline.gov.in'
+  });
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await apiClient.get('/settings');
+        if (response.data.status === 'success') {
+          setSupportInfo({
+            helplineNumber: response.data.data.helplineNumber || '+91 0755 2700800',
+            supportEmail: response.data.data.supportEmail || 'distributor-help@mponline.gov.in'
+          });
+        }
+      } catch (e) {
+        console.error('Failed to fetch support settings:', e);
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  // Profile data from logged in user or fallback
+  const profile = {
+    name: user?.full_name || 'Distributor Partner',
+    distributorId: `DIST-MP-${1000 + (user?.id ? Number(user.id) : 101)}`,
+    mobile: user?.mobile || '+91 98260 12345',
+    email: user?.email || 'distributor@mponline.gov.in',
+    district: user?.district || 'Bhopal',
+    tehsil: user?.tehsil || 'Huzur',
     joiningDate: '15 Jan 2024',
     status: 'ACTIVE',
-    commissionRate: '3.5%',
-    totalAgents: 28,
-    aadhaar: 'XXXX-XXXX-8921',
-    pan: 'ABCDE1234F',
-    bank: {
-      accountName: 'Rajesh Sharma',
-      bankName: 'State Bank of India',
-      accountNo: '30987654321',
-      ifsc: 'SBIN0001234',
-      upiId: '9826012345@sbi'
-    }
-  });
+    aadhaar: (user as any)?.aadhaar_number || (user as any)?.aadhaar || 'XXXX-XXXX-8921'
+  };
 
   // Password change state
   const [passwords, setPasswords] = useState({
@@ -40,10 +58,11 @@ export default function DistributorProfile() {
     newPass: '',
     confirm: ''
   });
+  const [passLoading, setPassLoading] = useState(false);
   const [passSuccess, setPassSuccess] = useState(false);
   const [passError, setPassError] = useState('');
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassError('');
     setPassSuccess(false);
@@ -63,9 +82,23 @@ export default function DistributorProfile() {
       return;
     }
 
-    // Success static feedback
-    setPassSuccess(true);
-    setPasswords({ current: '', newPass: '', confirm: '' });
+    setPassLoading(true);
+    try {
+      const response = await apiClient.post('/auth/change-password', {
+        currentPassword: passwords.current,
+        newPassword: passwords.newPass
+      });
+
+      if (response.data.status === 'success') {
+        setPassSuccess(true);
+        setPasswords({ current: '', newPass: '', confirm: '' });
+        setTimeout(() => setPassSuccess(false), 4000);
+      }
+    } catch (err: any) {
+      setPassError(err.response?.data?.message || 'Password update failed. Kripya Current Password check karein.');
+    } finally {
+      setPassLoading(false);
+    }
   };
 
   return (
@@ -75,8 +108,8 @@ export default function DistributorProfile() {
         {/* Page Header */}
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xl border border-blue-200 shadow-inner">
-              RS
+            <div className="h-12 w-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xl border border-blue-200 shadow-inner uppercase">
+              {profile.name.charAt(0)}
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -90,14 +123,12 @@ export default function DistributorProfile() {
               </p>
             </div>
           </div>
-          
-         
         </div>
 
         {/* Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Left 2 Columns: Personal & Territory Info */}
+          {/* Left 2 Columns: Personal Info */}
           <div className="lg:col-span-2 space-y-6">
             
             {/* Profile Overview */}
@@ -146,8 +177,8 @@ export default function DistributorProfile() {
                 </div>
 
                 <div className="p-3 bg-slate-50/70 rounded-lg border border-slate-100">
-                  <span className="text-slate-400 text-xs font-medium block">PAN Number</span>
-                  <span className="font-semibold text-slate-800">{profile.pan}</span>
+                  <span className="text-slate-400 text-xs font-medium block">District / Location</span>
+                  <span className="font-semibold text-slate-800">{profile.district}, {profile.tehsil}</span>
                 </div>
               </div>
             </div>
@@ -174,8 +205,9 @@ export default function DistributorProfile() {
                 )}
 
                 {passError && (
-                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs">
-                    {passError}
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                    <span>{passError}</span>
                   </div>
                 )}
 
@@ -187,6 +219,7 @@ export default function DistributorProfile() {
                     value={passwords.current}
                     onChange={(e) => setPasswords({...passwords, current: e.target.value})}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+                    required
                   />
                 </div>
 
@@ -198,6 +231,7 @@ export default function DistributorProfile() {
                     value={passwords.newPass}
                     onChange={(e) => setPasswords({...passwords, newPass: e.target.value})}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+                    required
                   />
                 </div>
 
@@ -209,20 +243,28 @@ export default function DistributorProfile() {
                     value={passwords.confirm}
                     onChange={(e) => setPasswords({...passwords, confirm: e.target.value})}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+                    required
                   />
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-colors flex items-center justify-center gap-2"
+                  disabled={passLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <Key className="h-4 w-4" />
-                  <span>Update Password</span>
+                  {passLoading ? (
+                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
+                  ) : (
+                    <>
+                      <Key className="h-4 w-4" />
+                      <span>Update Password</span>
+                    </>
+                  )}
                 </button>
               </form>
             </div>
 
-            {/* Quick Support / Contact Card */}
+            {/* Dynamic Support / Contact Card */}
             <div className="bg-slate-900 text-white rounded-xl p-5 shadow-sm space-y-3">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-5 w-5 text-blue-400" />
@@ -231,9 +273,9 @@ export default function DistributorProfile() {
               <p className="text-xs text-slate-300">
                 Need to modify profile details or update bank account? Contact your assigned MP Online District Manager.
               </p>
-              <div className="pt-2 border-t border-slate-800 text-xs space-y-1 text-slate-400">
-                <p>📞 DM Helpline: <span className="text-white font-semibold">+91 0755 2700800</span></p>
-                <p>✉️ Support: <span className="text-white font-semibold">distributor-help@mponline.gov.in</span></p>
+              <div className="pt-2 border-t border-slate-800 text-xs space-y-1.5 text-slate-300">
+                <p>📞 DM Helpline: <span className="text-emerald-400 font-bold">{supportInfo.helplineNumber}</span></p>
+                <p>✉️ Support: <span className="text-blue-300 font-bold">{supportInfo.supportEmail}</span></p>
               </div>
             </div>
 

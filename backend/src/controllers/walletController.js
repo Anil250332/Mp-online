@@ -146,7 +146,7 @@ export const deductWallet = async (req, res) => {
   const connection = await pool.getConnection();
   try {
     const userId = req.user?.id || 1;
-    const { amount, serviceName } = req.body;
+    const { amount, serviceName, appId } = req.body;
     const deductAmt = parseFloat(amount);
 
     if (isNaN(deductAmt) || deductAmt <= 0) {
@@ -177,12 +177,16 @@ export const deductWallet = async (req, res) => {
     // Update Wallet Balance
     await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closingBalance, walletId]);
 
+    const remarksText = appId
+      ? `Service Fee for ${serviceName || 'Application'} [App ID: ${appId}]`
+      : `Service Fee for ${serviceName || 'Application'}`;
+
     const [txnRes] = await connection.query(
       `INSERT INTO transactions (
         txn_no, wallet_id, user_id, type, category, amount,
         opening_balance, closing_balance, status, remarks
       ) VALUES (?, ?, ?, 'debit', 'service_fee', ?, ?, ?, 'success', ?)`,
-      ['TXN-TEMP', walletId, userId, deductAmt, openingBalance, closingBalance, `Service Fee for ${serviceName || 'Application'}`]
+      ['TXN-TEMP', walletId, userId, deductAmt, openingBalance, closingBalance, remarksText]
     );
 
     const year = new Date().getFullYear();
@@ -197,7 +201,8 @@ export const deductWallet = async (req, res) => {
       data: {
         txnNo,
         amount: deductAmt,
-        closingBalance
+        closingBalance,
+        appId
       }
     });
   } catch (error) {
@@ -208,3 +213,77 @@ export const deductWallet = async (req, res) => {
     connection.release();
   }
 };
+
+/**
+ * 4. Refund Wallet Balance for Rejected Service Application
+ * POST /api/wallet/refund
+ */
+export const refundWallet = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const { userId, amount, serviceName, appId, remarks } = req.body;
+    const targetUserId = userId || req.user?.id;
+    const refundAmt = parseFloat(amount);
+
+    if (!targetUserId) {
+      return res.status(400).json({ status: 'error', message: 'Target user ID is required for refund.' });
+    }
+
+    if (isNaN(refundAmt) || refundAmt <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Invalid refund amount.' });
+    }
+
+    await connection.beginTransaction();
+
+    const [wallets] = await connection.query('SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE', [targetUserId]);
+    let walletId;
+    let openingBalance = 0.00;
+
+    if (wallets.length === 0) {
+      const [wRes] = await connection.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [targetUserId]);
+      walletId = wRes.insertId;
+    } else {
+      walletId = wallets[0].id;
+      openingBalance = parseFloat(wallets[0].balance);
+    }
+
+    const closingBalance = openingBalance + refundAmt;
+
+    // Update Wallet Balance
+    await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closingBalance, walletId]);
+
+    const remarksText = `Refund for Rejected Service: ${serviceName || 'Application'}${appId ? ` [App ID: ${appId}]` : ''}${remarks ? ` - Reason: ${remarks}` : ''}`;
+
+    const [txnRes] = await connection.query(
+      `INSERT INTO transactions (
+        txn_no, wallet_id, user_id, type, category, amount,
+        opening_balance, closing_balance, status, remarks
+      ) VALUES (?, ?, ?, 'credit', 'refund', ?, ?, ?, 'success', ?)`,
+      ['TXN-TEMP', walletId, targetUserId, refundAmt, openingBalance, closingBalance, remarksText]
+    );
+
+    const year = new Date().getFullYear();
+    const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
+    await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
+
+    await connection.commit();
+
+    return res.status(200).json({
+      status: 'success',
+      message: `₹${refundAmt.toFixed(2)} refund successfully credited back to wallet!`,
+      data: {
+        txnNo,
+        amount: refundAmt,
+        closingBalance,
+        appId
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Refund Wallet Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
+  }
+};
+

@@ -42,13 +42,28 @@ export const LoginPage: React.FC = () => {
     <div className="min-h-screen bg-[#f4f7fb] flex flex-col justify-between font-sans">
       {/* Top Header Bar */}
       <header className="bg-[#1d4ed8] text-white shadow-md px-4 sm:px-8 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-amber-400 to-orange-500 flex items-center justify-center shadow-inner border border-white/20">
-            <span className="text-xs font-black text-blue-950">V2</span>
+        <div className="flex items-center gap-3 group cursor-pointer">
+          <div className="relative shrink-0">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-amber-400 via-orange-500 to-emerald-400 rounded-xl blur-xs opacity-80 group-hover:opacity-100 transition duration-300"></div>
+            <div className="relative h-10 w-10 rounded-xl bg-slate-950 border border-white/20 flex items-center justify-center shadow-lg">
+              <span className="text-sm font-black bg-gradient-to-br from-amber-300 via-orange-400 to-emerald-300 bg-clip-text text-transparent tracking-tighter">
+                V2
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-base font-black tracking-tight text-white uppercase">CITIZEN CENTER</span>
-            <p className="text-[10px] font-bold text-amber-300 tracking-widest uppercase -mt-0.5">ONLINE PORTAL</p>
+          <div className="leading-none select-none">
+            <div className="flex items-center gap-1.5">
+              <span className="text-lg font-black tracking-tight text-white drop-shadow-sm">V2</span>
+              <span className="text-lg font-black tracking-wider bg-gradient-to-r from-amber-300 via-orange-400 to-amber-200 bg-clip-text text-transparent uppercase drop-shadow-xs">
+                ONLINE
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="inline-flex items-center gap-1 bg-white/15 text-amber-300 text-[9px] font-extrabold tracking-widest px-2 py-0.5 rounded-full border border-white/20 backdrop-blur-xs uppercase">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>SERVICES PORTAL</span>
+              </span>
+            </div>
           </div>
         </div>
 
@@ -154,37 +169,57 @@ export const LoginPage: React.FC = () => {
             <div className="mt-6 pt-5 border-t border-slate-100 text-center space-y-3">
               {/* Quick Demo Fill Buttons for Testing */}
               <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl text-left space-y-2">
-                <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider block">⚡ Quick Demo Logins</span>
+                <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider block">⚡ Quick Demo Logins (All 5 Roles)</span>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      setMobile('9876543210');
-                      setPassword('password123');
+                      setMobile('9999900001');
+                      setPassword('Admin@123');
                     }}
-                    className="px-2.5 py-1 bg-white hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
+                    className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
                   >
-                    🏪 Retailer Shop (9876543210)
+                    👑 Super Admin (9999900001)
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      setMobile('8888888888');
+                      setMobile('9999900002');
+                      setPassword('Manager@123');
+                    }}
+                    className="px-2.5 py-1 bg-white hover:bg-violet-100 border border-violet-200 text-violet-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    💼 Manager (9999900002)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobile('9999900003');
                       setPassword('Distributor@123');
                     }}
                     className="px-2.5 py-1 bg-white hover:bg-blue-100 border border-blue-200 text-blue-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
                   >
-                    🏬 Distributor (8888888888)
+                    🏬 Distributor (9999900003)
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      setMobile('9999999999');
-                      setPassword('Admin@12345');
+                      setMobile('9999900004');
+                      setPassword('Agent@123');
                     }}
-                    className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
+                    className="px-2.5 py-1 bg-white hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
                   >
-                    👑 Super Admin (9999999999)
+                    🏪 Retailer Shop (9999900004)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobile('9999900005');
+                      setPassword('Operator@123');
+                    }}
+                    className="px-2.5 py-1 bg-white hover:bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    🎧 Operator (9999900005)
                   </button>
                 </div>
               </div>

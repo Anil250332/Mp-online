@@ -4,7 +4,8 @@ import {
   verifyRegistration,
   login,
   logout,
-  getMe
+  getMe,
+  changePassword
 } from '../controllers/authController.js';
 import { authenticateToken } from '../middlewares/authMiddleware.js';
 
@@ -18,5 +19,6 @@ router.post('/login', login);
 // Protected Auth Endpoints
 router.post('/logout', authenticateToken, logout);
 router.get('/me', authenticateToken, getMe);
+router.post('/change-password', authenticateToken, changePassword);
 
 export default router;

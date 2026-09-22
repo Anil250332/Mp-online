@@ -10,6 +10,9 @@ import shopRoutes from './routes/shopRoutes.js';
 import complaintRoutes from './routes/complaintRoutes.js';
 import walletRoutes from './routes/walletRoutes.js';
 import serviceRoutes from './routes/serviceRoutes.js';
+import userRoutes from './routes/userRoutes.js';
+import settingsRoutes from './routes/settingsRoutes.js';
+import operatorAssignmentRoutes from './routes/operatorAssignmentRoutes.js';
 
 dotenv.config();
 
@@ -52,6 +55,9 @@ app.use('/api/shops', shopRoutes);
 app.use('/api/complaints', complaintRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/services', serviceRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/operator-assignments', operatorAssignmentRoutes);
 
 // Root route
 app.get('/', (req, res) => {

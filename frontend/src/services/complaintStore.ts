@@ -5,7 +5,7 @@ export interface ComplaintTicket {
   ticketNo: string;
   raisedByUserId?: number | string;
   raisedByName: string;
-  raisedByRole: 'agent' | 'operator' | 'distributor' | 'manager' | 'super_admin';
+  raisedByRole: 'agent' | 'operator' | 'distributor' | 'manager' | 'super_admin' | 'sub_admin';
   subject: string;
   category: string;
   description: string;
@@ -15,51 +15,53 @@ export interface ComplaintTicket {
   createdAt: string;
 }
 
-const STORAGE_KEY = 'v2online_complaints_db';
-
-const defaultComplaints: ComplaintTicket[] = [
-  {
-    id: '1',
-    ticketNo: 'TKT-2026-9041',
-    raisedByUserId: '8888888888',
-    raisedByName: 'Rajesh Sharma Distributor',
-    raisedByRole: 'distributor',
-    subject: 'PAN Card Service Portal Delay in District Huzur',
-    category: 'Service Delay',
-    description: 'PAN card application processing is taking more than 48 hours for 3 agents in Huzur block.',
-    status: 'IN_REVIEW',
-    resolutionNote: 'Technical team is reviewing the server response times.',
-    createdAt: '15 Sep 2026'
-  },
-  {
-    id: '2',
-    ticketNo: 'TKT-2026-8812',
-    raisedByUserId: '9876543210',
-    raisedByName: 'Sharma MP Online & CSC Center',
-    raisedByRole: 'agent',
-    subject: 'Kiosk Document Upload Verification Issue',
-    category: 'Technical Glitch',
-    description: 'PDF upload for Samagra ID modification was failing with 500 status code.',
-    status: 'RESOLVED',
-    resolutionNote: 'Issue resolved by technical team. File size limit raised to 5MB.',
-    resolvedBy: 'Super Admin Master',
-    createdAt: '10 Sep 2026'
-  }
-];
-
 class ComplaintStoreService {
   private complaints: ComplaintTicket[] = [];
   private listeners: (() => void)[] = [];
+  private currentUserId: string = '';
 
   constructor() {
-    this.loadFromStorage();
+    this.initFromLocalUser();
+  }
+
+  private initFromLocalUser() {
+    try {
+      const userStr = localStorage.getItem('v2online_user');
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        this.currentUserId = user.id?.toString() || '';
+        this.loadFromStorage();
+        this.syncBackend();
+      }
+    } catch {
+      // No user logged in yet
+    }
+  }
+
+  public setUser(userId: string | number) {
+    const newId = userId.toString();
+    if (this.currentUserId !== newId) {
+      this.currentUserId = newId;
+      this.complaints = [];
+      this.loadFromStorage();
+    }
     this.syncBackend();
+  }
+
+  public clearUser() {
+    this.currentUserId = '';
+    this.complaints = [];
+    this.notify();
+  }
+
+  private getStorageKey(): string {
+    return `v2online_complaints_${this.currentUserId}`;
   }
 
   public async syncBackend() {
     try {
       const response = await apiClient.get('/complaints');
-      if (response.data.status === 'success' && Array.isArray(response.data.data) && response.data.data.length > 0) {
+      if (response.data.status === 'success' && Array.isArray(response.data.data)) {
         this.complaints = response.data.data;
         this.saveToStorage();
       }
@@ -69,22 +71,21 @@ class ComplaintStoreService {
   }
 
   private loadFromStorage() {
+    if (!this.currentUserId) return;
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(this.getStorageKey());
       if (saved) {
         this.complaints = JSON.parse(saved);
-      } else {
-        this.complaints = [...defaultComplaints];
-        this.saveToStorage();
       }
     } catch {
-      this.complaints = [...defaultComplaints];
+      this.complaints = [];
     }
   }
 
   private saveToStorage() {
+    if (!this.currentUserId) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.complaints));
+      localStorage.setItem(this.getStorageKey(), JSON.stringify(this.complaints));
     } catch (e) {
       console.error('Failed to save complaints to storage', e);
     }
@@ -124,28 +125,64 @@ class ComplaintStoreService {
     return this.sortComplaints(this.complaints);
   }
 
-  public getComplaintsForUser(userId?: string | number, mobile?: string): ComplaintTicket[] {
-    const filtered = this.complaints.filter(c => 
-      c.raisedByUserId === userId || 
-      c.raisedByUserId === mobile ||
-      (mobile && c.raisedByUserId?.toString() === mobile)
-    );
+  public getComplaintsForUser(userId?: string | number, mobile?: string, name?: string): ComplaintTicket[] {
+    const uIdStr = userId?.toString();
+    const mobStr = mobile?.toString();
+    const filtered = this.complaints.filter(c => {
+      const cUserId = c.raisedByUserId?.toString();
+      if (uIdStr && cUserId === uIdStr) return true;
+      if (mobStr && cUserId === mobStr) return true;
+      if (name && c.raisedByName && c.raisedByName.toLowerCase() === name.toLowerCase()) return true;
+      return false;
+    });
     return this.sortComplaints(filtered);
   }
 
-  // Raise new complaint
-  public addComplaint(data: {
+  // Raise new complaint — API-first
+  public async addComplaint(data: {
     raisedByUserId?: number | string;
     raisedByName: string;
-    raisedByRole: 'agent' | 'operator' | 'distributor' | 'manager' | 'super_admin';
+    raisedByRole: 'agent' | 'operator' | 'distributor' | 'manager' | 'super_admin' | 'sub_admin';
     subject: string;
     category: string;
     description: string;
-  }): ComplaintTicket {
+  }): Promise<ComplaintTicket> {
+    // Call API first
+    try {
+      const response = await apiClient.post('/complaints', {
+        subject: data.subject,
+        category: data.category,
+        description: data.description,
+        raisedByUserId: data.raisedByUserId,
+        raisedByMobile: data.raisedByUserId
+      });
+
+      // Re-sync from backend to get real data
+      await this.syncBackend();
+
+      if (response.data.status === 'success') {
+        return {
+          id: response.data.data?.id || Date.now().toString(),
+          ticketNo: response.data.data?.ticketNo || 'TKT-PENDING',
+          raisedByUserId: data.raisedByUserId,
+          raisedByName: data.raisedByName,
+          raisedByRole: data.raisedByRole,
+          subject: data.subject,
+          category: data.category,
+          description: data.description,
+          status: 'OPEN',
+          createdAt: 'Just Now'
+        };
+      }
+    } catch {
+      // Offline fallback
+    }
+
+    // Offline fallback: add locally
     const year = new Date().getFullYear();
     const newTicket: ComplaintTicket = {
       id: Date.now().toString(),
-      ticketNo: `TKT-${year}-${1000 + this.complaints.length + 1}`,
+      ticketNo: `TKT-${year}-OFFLINE`,
       raisedByUserId: data.raisedByUserId,
       raisedByName: data.raisedByName,
       raisedByRole: data.raisedByRole,
@@ -158,18 +195,6 @@ class ComplaintStoreService {
 
     this.complaints.unshift(newTicket);
     this.saveToStorage();
-
-    // Async sync to backend
-    apiClient.post('/complaints', {
-      subject: data.subject,
-      category: data.category,
-      description: data.description,
-      raisedByUserId: data.raisedByUserId,
-      raisedByMobile: data.raisedByUserId
-    }).then(() => {
-      this.syncBackend();
-    }).catch(() => {});
-
     return newTicket;
   }
 

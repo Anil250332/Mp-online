@@ -47,7 +47,7 @@ export default function ShopList() {
     return unsubscribe;
   }, []);
 
-  const handleAddShopSubmit = (e: React.FormEvent) => {
+  const handleAddShopSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
     setSuccessMsg('');
@@ -67,7 +67,7 @@ export default function ShopList() {
       return;
     }
 
-    const created = shopStore.addActiveShopByDistributor(formData);
+    const created = await shopStore.addActiveShopByDistributor(formData);
 
     setSuccessMsg(`Shop "${created.shopName}" added successfully! The owner can now log in at /login using Mobile: ${created.mobile}`);
     setFormData({

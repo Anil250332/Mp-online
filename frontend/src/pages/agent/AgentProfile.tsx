@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
+import apiClient from '../../api/client';
 import {
   User,
   Phone,
@@ -10,7 +11,8 @@ import {
   Lock,
   Key,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  ShieldCheck
 } from 'lucide-react';
 
 export default function AgentProfile() {
@@ -20,10 +22,34 @@ export default function AgentProfile() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [passLoading, setPassLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  const handlePasswordUpdate = (e: React.FormEvent) => {
+  // Dynamic system settings (Helpline & Support Email)
+  const [supportInfo, setSupportInfo] = useState({
+    helplineNumber: '+91 0755 2700800',
+    supportEmail: 'distributor-help@mponline.gov.in'
+  });
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await apiClient.get('/settings');
+        if (response.data.status === 'success') {
+          setSupportInfo({
+            helplineNumber: response.data.data.helplineNumber || '+91 0755 2700800',
+            supportEmail: response.data.data.supportEmail || 'distributor-help@mponline.gov.in'
+          });
+        }
+      } catch (e) {
+        console.error('Failed to fetch support settings:', e);
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  const handlePasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -43,11 +69,25 @@ export default function AgentProfile() {
       return;
     }
 
-    setSuccessMsg('Security password updated successfully!');
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
-    setTimeout(() => setSuccessMsg(''), 3000);
+    setPassLoading(true);
+    try {
+      const response = await apiClient.post('/auth/change-password', {
+        currentPassword,
+        newPassword
+      });
+
+      if (response.data.status === 'success') {
+        setSuccessMsg('Security password updated successfully!');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setTimeout(() => setSuccessMsg(''), 4000);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.response?.data?.message || 'Password update failed. Kripya Current Password check karein.');
+    } finally {
+      setPassLoading(false);
+    }
   };
 
   return (
@@ -76,56 +116,71 @@ export default function AgentProfile() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
           {/* Left Box: Profile Info */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-            <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-              <div className="h-12 w-12 rounded-full bg-blue-100 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-lg">
-                {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'S'}
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+              <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                <div className="h-12 w-12 rounded-full bg-blue-100 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-lg">
+                  {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'S'}
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-900 text-base">{user?.full_name || 'Retailer Partner'}</h2>
+                 
+                </div>
               </div>
-              <div>
-                <h2 className="font-bold text-slate-900 text-base">{user?.full_name || 'Rajesh Sharma'}</h2>
-                <span className="inline-block bg-blue-50 text-blue-700 text-[10px] font-extrabold uppercase px-2 py-0.5 rounded">
-                  MP Online Kiosk Agent / Retailer
-                </span>
+
+              <div className="space-y-3 text-xs sm:text-sm">
+                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <Store className="h-4 w-4 text-blue-600 shrink-0" />
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-semibold uppercase">Shop / Kiosk Name</div>
+                    <div className="font-bold text-slate-800">{user?.shop_name || 'Sharma MP Online & CSC Center'}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <Phone className="h-4 w-4 text-blue-600 shrink-0" />
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-semibold uppercase">Mobile Number</div>
+                    <div className="font-bold text-slate-800">{user?.mobile || '9876543210'}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <Mail className="h-4 w-4 text-blue-600 shrink-0" />
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-semibold uppercase">Email Address</div>
+                    <div className="font-bold text-slate-800">{user?.email || 'retailer@mponline.in'}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <MapPin className="h-4 w-4 text-blue-600 shrink-0" />
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-semibold uppercase">District / Location</div>
+                    <div className="font-bold text-slate-800">{user?.district || 'Bhopal'}, MP</div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="space-y-3 text-xs sm:text-sm">
-              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <Store className="h-4 w-4 text-blue-600 shrink-0" />
-                <div>
-                  <div className="text-[10px] text-slate-400 font-semibold uppercase">Shop / Kiosk Name</div>
-                  <div className="font-bold text-slate-800">{user?.shop_name || 'Sharma MP Online & CSC Center'}</div>
-                </div>
+            {/* Dynamic Support Box */}
+            <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-sm space-y-3">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-blue-400" />
+                <h3 className="font-bold text-sm">Retailer Support & Helpdesk</h3>
               </div>
-
-              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <Phone className="h-4 w-4 text-blue-600 shrink-0" />
-                <div>
-                  <div className="text-[10px] text-slate-400 font-semibold uppercase">Mobile Number</div>
-                  <div className="font-bold text-slate-800">{user?.mobile || '9876543210'}</div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <Mail className="h-4 w-4 text-blue-600 shrink-0" />
-                <div>
-                  <div className="text-[10px] text-slate-400 font-semibold uppercase">Email Address</div>
-                  <div className="font-bold text-slate-800">{user?.email || 'rajesh.sharma@mponline.in'}</div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <MapPin className="h-4 w-4 text-blue-600 shrink-0" />
-                <div>
-                  <div className="text-[10px] text-slate-400 font-semibold uppercase">District / Location</div>
-                  <div className="font-bold text-slate-800">{user?.district || 'Bhopal'}, MP</div>
-                </div>
+              <p className="text-xs text-slate-300">
+                Facing technical issues or need help with kiosk verification? Contact your assigned District Manager.
+              </p>
+              <div className="pt-2 border-t border-slate-800 text-xs space-y-1.5 text-slate-300">
+                <p>📞 Helpline: <span className="text-emerald-400 font-bold">{supportInfo.helplineNumber}</span></p>
+                <p>✉️ Support Email: <span className="text-blue-300 font-bold">{supportInfo.supportEmail}</span></p>
               </div>
             </div>
           </div>
 
           {/* Right Box: Security & Password Update */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4 h-fit">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-slate-900 font-bold text-base">
               <Lock className="h-5 w-5 text-blue-600" />
               <span>Security & Password</span>
@@ -148,7 +203,7 @@ export default function AgentProfile() {
                   placeholder="••••••••"
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 />
               </div>
@@ -162,7 +217,7 @@ export default function AgentProfile() {
                   placeholder="At least 6 characters"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 />
               </div>
@@ -176,7 +231,7 @@ export default function AgentProfile() {
                   placeholder="Re-enter new password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 />
               </div>
@@ -184,10 +239,17 @@ export default function AgentProfile() {
               <div className="pt-2">
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-colors flex items-center justify-center gap-2"
+                  disabled={passLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <Key className="h-4 w-4" />
-                  <span>Update Password</span>
+                  {passLoading ? (
+                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
+                  ) : (
+                    <>
+                      <Key className="h-4 w-4" />
+                      <span>Update Password</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>

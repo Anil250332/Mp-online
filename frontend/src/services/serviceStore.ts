@@ -1,34 +1,79 @@
 import apiClient from '../api/client';
 
+export type FormFieldType = 'text' | 'number' | 'date' | 'select' | 'textarea' | 'file';
+export type DocUploaderRole = 'shop' | 'operator';
+
+export const DROPDOWN_PRESETS = {
+  custom: { name: '✏️ Custom Defined Options', options: [] as string[] },
+  mp_districts: {
+    name: '🏙️ MP All 55 Districts',
+    options: [
+      'Agar Malwa', 'Alirajpur', 'Anuppur', 'Ashoknagar', 'Balaghat', 'Barwani', 'Betul', 'Bhind', 'Bhopal', 'Burhanpur',
+      'Chhatarpur', 'Chhindwara', 'Damoh', 'Datia', 'Dewas', 'Dhar', 'Dindori', 'Guna', 'Gwalior', 'Harda',
+      'Hoshangabad (Narmadapuram)', 'Indore', 'Jabalpur', 'Jhabua', 'Katni', 'Khandwa', 'Khargone', 'Mandla', 'Mandsaur',
+      'Mauganj', 'Maihar', 'Morena', 'Narsinghpur', 'Neemuch', 'Niwari', 'Pandhurna', 'Panna', 'Raisen', 'Rajgarh',
+      'Ratlam', 'Rewa', 'Sagar', 'Satna', 'Sehore', 'Seoni', 'Shahdol', 'Shajapur', 'Sheopur', 'Shivpuri',
+      'Sidhi', 'Singrauli', 'Tikamgarh', 'Ujjain', 'Umaria', 'Vidisha'
+    ]
+  },
+  gender: {
+    name: '🚻 Gender (Male / Female / Other)',
+    options: ['Male', 'Female', 'Transgender']
+  },
+  caste: {
+    name: '📋 Caste Category (General, OBC, SC, ST, EWS)',
+    options: ['General (UR)', 'OBC', 'SC', 'ST', 'EWS']
+  },
+  indian_states: {
+    name: '🗺️ Indian States (MP, UP, Rajasthan, etc.)',
+    options: ['Madhya Pradesh', 'Uttar Pradesh', 'Rajasthan', 'Maharashtra', 'Gujarat', 'Chhattisgarh', 'Bihar', 'Delhi', 'Other']
+  }
+};
+
+export interface FormField {
+  id: string;
+  type: FormFieldType;
+  label: string;
+  placeholder?: string;
+  required: boolean;
+  options?: string[]; // For 'select' dropdown
+  presetType?: string; // 'custom' | 'mp_districts' | 'gender' | 'caste' | 'indian_states'
+  docUploader?: DocUploaderRole; // For 'file' doc upload: 'shop' (applicant) or 'operator' (response)
+  helpText?: string;
+}
+
+export interface SubServiceItem {
+  id: string;
+  name: string;
+  code: string;
+  iconUrl?: string;
+  fee: number; // Price in ₹
+  adminCommissionPercent: number; // Admin commission in %
+  description?: string;
+  formFields: FormField[];
+  operatorAssignmentMode?: 'single' | 'area_wise' | 'ward_wise';
+  isActive?: boolean;
+}
+
 export interface ServiceItem {
   id: string;
   name: string;
   code: string;
-  fee: number;
-  description: string;
   category: string;
+  iconUrl?: string;
   iconName?: string;
+  description: string;
+  hasSubServices: boolean;
+  fee: number; // Price in ₹ (if hasSubServices is false)
+  adminCommissionPercent: number; // Admin commission in % (if hasSubServices is false)
+  formFields: FormField[]; // Direct form if hasSubServices is false
+  subServices: SubServiceItem[]; // Sub-services if hasSubServices is true
+  operatorAssignmentMode?: 'single' | 'area_wise' | 'ward_wise';
   isActive: boolean;
+  createdAt?: string;
 }
 
-const STORAGE_KEY = 'v2online_services_db';
-
-const defaultServices: ServiceItem[] = [
-  { id: '1', name: 'Aadhaar Services', code: 'ADR-01', fee: 50.00, description: 'Aadhaar Update, Mobile Link, & Document Upload', category: 'Identity Services', iconName: 'UserCheck', isActive: true },
-  { id: '2', name: 'Pan Card Services', code: 'PAN-01', fee: 107.00, description: 'New PAN Card & Correction Application', category: 'Tax & Identity', iconName: 'CreditCard', isActive: true },
-  { id: '3', name: 'LL / DL / Vehicle Services', code: 'RTO-01', fee: 150.00, description: 'Learner License, Driving License & RC Renewal', category: 'Transport', iconName: 'Car', isActive: true },
-  { id: '4', name: 'Ration Card Services', code: 'RTN-01', fee: 40.00, description: 'Member Add/Remove & New Ration Card', category: 'Food & Civil Supplies', iconName: 'ShoppingBag', isActive: true },
-  { id: '5', name: 'Voter ID Services', code: 'VOT-01', fee: 30.00, description: 'Voter Card Form 6, 7, 8 Registration', category: 'Election Commission', iconName: 'Vote', isActive: true },
-  { id: '6', name: 'Farmer / Khasra Services', code: 'FRM-01', fee: 45.00, description: 'MP Bhulekh Khasra, Khatauni & Land Record', category: 'Revenue & Land', iconName: 'Tractor', isActive: true },
-  { id: '7', name: 'MP Samagra ID Services', code: 'SMG-01', fee: 30.00, description: 'Samagra Family ID, Member KYC & Edit', category: 'Social Security', iconName: 'FileText', isActive: true },
-  { id: '8', name: 'MP Ration Parchi Services', code: 'RTP-01', fee: 25.00, description: 'Eligibility Slip & Ration Parchi Print', category: 'Food & Supplies', iconName: 'Printer', isActive: true },
-  { id: '9', name: 'MP Sambal Yojana Services', code: 'SMB-01', fee: 50.00, description: 'Unorganized Worker Card & Sambal 2.0 Registration', category: 'Welfare', iconName: 'Shield', isActive: true },
-  { id: '10', name: 'Ayushman Card Services', code: 'AYU-01', fee: 30.00, description: 'Ayushman Bharat 5 Lakh Health Card Creation', category: 'Health & Family Welfare', iconName: 'HeartPulse', isActive: true },
-  { id: '11', name: 'MP eDistrict Services', code: 'EDT-01', fee: 60.00, description: 'Income, Caste, Residence & Solvency Certificate', category: 'e-Governance', iconName: 'Building', isActive: true },
-  { id: '12', name: 'Gumasta License Services', code: 'GUM-01', fee: 200.00, description: 'Shop Establishment & Trade Gumasta License', category: 'Commercial & Trade', iconName: 'Store', isActive: true },
-  { id: '13', name: 'Apply Udyam Certificate', code: 'UDY-01', fee: 100.00, description: 'MSME Udyam Registration Certificate', category: 'MSME', iconName: 'Award', isActive: true },
-  { id: '14', name: 'GST Registration', code: 'GST-01', fee: 500.00, description: 'New GSTIN Registration & Filing Portal', category: 'Taxation', iconName: 'Receipt', isActive: true }
-];
+const STORAGE_KEY = 'v2online_services_catalog_v2';
 
 class ServiceStoreService {
   private services: ServiceItem[] = [];
@@ -42,12 +87,12 @@ class ServiceStoreService {
   public async syncBackend() {
     try {
       const response = await apiClient.get('/services');
-      if (response.data.status === 'success' && Array.isArray(response.data.data) && response.data.data.length > 0) {
+      if (response.data.status === 'success' && Array.isArray(response.data.data)) {
         this.services = response.data.data;
         this.saveToStorage();
       }
     } catch {
-      // Offline fallback
+      // Offline fallback — keep localStorage data
     }
   }
 
@@ -57,11 +102,10 @@ class ServiceStoreService {
       if (saved) {
         this.services = JSON.parse(saved);
       } else {
-        this.services = [...defaultServices];
-        this.saveToStorage();
+        this.services = [];
       }
     } catch {
-      this.services = [...defaultServices];
+      this.services = [];
     }
   }
 
@@ -93,37 +137,93 @@ class ServiceStoreService {
     return this.services.filter(s => s.isActive);
   }
 
-  // Admin / Manager Adds New Service
-  public addService(data: { name: string; fee: number; description: string; category: string }): ServiceItem {
+  public getServiceById(id: string): ServiceItem | undefined {
+    return this.services.find(s => s.id === id);
+  }
+
+  // Upload Icon Image to Server
+  public async uploadIcon(file: File): Promise<string> {
+    try {
+      const formData = new FormData();
+      formData.append('icon', file);
+      const response = await apiClient.post('/services/upload-icon', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (response.data.status === 'success' && response.data.url) {
+        return response.data.url;
+      }
+    } catch (err) {
+      console.warn('Icon upload failed, generating local data URL preview fallback:', err);
+    }
+
+    // Fallback: create base64 / Object URL
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Add New Service
+  public async addService(data: Omit<ServiceItem, 'id' | 'createdAt'>): Promise<ServiceItem> {
     const newService: ServiceItem = {
       id: Date.now().toString(),
-      name: data.name,
-      code: `SRV-${Math.floor(100 + Math.random() * 900)}`,
-      fee: parseFloat(data.fee.toString()),
-      description: data.description,
-      category: data.category || 'General Citizen Service',
-      isActive: true
+      ...data,
+      createdAt: new Date().toISOString()
     };
 
-    this.services.unshift(newService);
-    this.saveToStorage();
+    try {
+      const response = await apiClient.post('/services', data);
+      if (response.data.status === 'success' && response.data.data?.id) {
+        newService.id = response.data.data.id;
+      }
+    } catch (err) {
+      console.warn('Backend sync failed, saved locally:', err);
+    }
 
-    apiClient.post('/services', data).then(() => this.syncBackend()).catch(() => {});
+    await this.syncBackend();
     return newService;
   }
 
-  // Admin / Manager Toggles Service Active Status
-  public toggleService(id: string) {
-    this.services = this.services.map(s => {
-      if (s.id === id) {
-        return { ...s, isActive: !s.isActive };
-      }
-      return s;
-    });
-    this.saveToStorage();
+  // Update Service
+  public async updateService(id: string, data: Partial<ServiceItem>): Promise<boolean> {
+    try {
+      await apiClient.put(`/services/${id}`, data);
+    } catch (err) {
+      console.warn('Backend sync failed, updated locally:', err);
+    }
 
-    apiClient.patch(`/services/${id}/toggle`).then(() => this.syncBackend()).catch(() => {});
+    await this.syncBackend();
+    return true;
+  }
+
+  // Toggle Active Status
+  public async toggleService(id: string): Promise<boolean> {
+    const s = this.services.find(item => item.id === id);
+    if (!s) return false;
+
+    try {
+      await apiClient.patch(`/services/${id}/toggle`);
+    } catch (err) {
+      console.warn('Backend toggle failed, toggled locally:', err);
+    }
+
+    await this.syncBackend();
+    return true;
+  }
+
+  // Delete Service
+  public async deleteService(id: string): Promise<boolean> {
+    try {
+      await apiClient.delete(`/services/${id}`);
+    } catch (err) {
+      console.warn('Backend delete failed, deleted locally:', err);
+    }
+
+    await this.syncBackend();
+    return true;
   }
 }
 
 export const serviceStore = new ServiceStoreService();
+export default serviceStore;

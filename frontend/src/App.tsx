@@ -11,12 +11,15 @@ import RegisterPage from './pages/auth/RegisterPage';
 // Agent Pages
 import AgentDashboard from './pages/agent/AgentDashboard';
 import AgentServices from './pages/agent/AgentServices';
+import AgentServiceRequests from './pages/agent/AgentServiceRequests';
 import AgentWallet from './pages/agent/AgentWallet';
 import AgentProfile from './pages/agent/AgentProfile';
 import AgentTerms from './pages/agent/AgentTerms';
 
 // Operator Pages
 import OperatorDashboard from './pages/operator/OperatorDashboard';
+import OperatorServiceRequests from './pages/operator/OperatorServiceRequests';
+import OperatorWallet from './pages/operator/OperatorWallet';
 
 // Distributor Pages
 import DistributorDashboard from './pages/distributor/DistributorDashboard';
@@ -28,11 +31,19 @@ import DistributorComplaint from './pages/distributor/DistributorComplaint';
 
 // Admin / Manager Pages
 import ManagerDashboard from './pages/manager/ManagerDashboard';
+import ManagerServices from './pages/manager/ManagerServices';
+import ManagerVerifyRequests from './pages/manager/ManagerVerifyRequests';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminShops from './pages/admin/AdminShops';
 import AdminComplaints from './pages/admin/AdminComplaints';
 import AdminServices from './pages/admin/AdminServices';
+import AdminCommissions from './pages/admin/AdminCommissions';
 import AdminWallet from './pages/admin/AdminWallet';
+import AdminUsers from './pages/admin/AdminUsers';
+import AdminOperators from './pages/admin/AdminOperators';
+import AdminSettings from './pages/admin/AdminSettings';
+import AdminWithdrawalRequests from './pages/admin/AdminWithdrawalRequests';
+import AdminTaskVerification from './pages/admin/AdminTaskVerification';
 
 export const App: React.FC = () => {
   return (
@@ -58,6 +69,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['agent']}>
                 <AgentServices />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/agent/my-requests"
+            element={
+              <ProtectedRoute allowedRoles={['agent']}>
+                <AgentServiceRequests />
               </ProtectedRoute>
             }
           />
@@ -100,6 +119,22 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['operator']}>
                 <OperatorDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/operator/service-requests"
+            element={
+              <ProtectedRoute allowedRoles={['operator']}>
+                <OperatorServiceRequests />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/operator/wallet"
+            element={
+              <ProtectedRoute allowedRoles={['operator']}>
+                <OperatorWallet />
               </ProtectedRoute>
             }
           />
@@ -179,12 +214,20 @@ export const App: React.FC = () => {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/manager/task-verification"
+            element={
+              <ProtectedRoute allowedRoles={['manager', 'super_admin', 'sub_admin']}>
+                <AdminTaskVerification />
+              </ProtectedRoute>
+            }
+          />
 
           {/* 5. Super Admin Panel Routes */}
           <Route
             path="/admin/dashboard"
             element={
-              <ProtectedRoute allowedRoles={['super_admin']}>
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin']}>
                 <AdminDashboard />
               </ProtectedRoute>
             }
@@ -192,7 +235,7 @@ export const App: React.FC = () => {
           <Route
             path="/admin/shops"
             element={
-              <ProtectedRoute allowedRoles={['super_admin']}>
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin']}>
                 <AdminShops />
               </ProtectedRoute>
             }
@@ -200,15 +243,23 @@ export const App: React.FC = () => {
           <Route
             path="/admin/services"
             element={
-              <ProtectedRoute allowedRoles={['super_admin', 'manager']}>
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
                 <AdminServices />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/commissions"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin']}>
+                <AdminCommissions />
               </ProtectedRoute>
             }
           />
           <Route
             path="/admin/wallet"
             element={
-              <ProtectedRoute allowedRoles={['super_admin', 'manager']}>
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
                 <AdminWallet />
               </ProtectedRoute>
             }
@@ -216,8 +267,124 @@ export const App: React.FC = () => {
           <Route
             path="/admin/complaints"
             element={
-              <ProtectedRoute allowedRoles={['super_admin']}>
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin']}>
                 <AdminComplaints />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
+                <AdminUsers />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/operators"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
+                <AdminOperators />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/withdrawal-requests"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
+                <AdminWithdrawalRequests />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/task-verification"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
+                <AdminTaskVerification />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/settings"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
+                <AdminSettings />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Manager access to User/Operator Management & Desks */}
+          <Route
+            path="/manager/users"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <AdminUsers />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/operators"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <AdminOperators />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/shops"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <AdminShops />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/services"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <ManagerServices />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/withdrawal-requests"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <AdminWithdrawalRequests />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/task-verification"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <AdminTaskVerification />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/verify-requests"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <ManagerVerifyRequests />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/wallet"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <AdminWallet />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Sub Admin Routes (same as admin) */}
+          <Route
+            path="/subadmin/dashboard"
+            element={
+              <ProtectedRoute allowedRoles={['sub_admin']}>
+                <AdminDashboard />
               </ProtectedRoute>
             }
           />
