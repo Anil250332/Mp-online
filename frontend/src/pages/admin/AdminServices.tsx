@@ -127,25 +127,53 @@ export default function AdminServices() {
 
   const handleCreateAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!assignSelectedServiceId || !assignSelectedOperatorId) return;
-    setAssignSubmitting(true);
     setAssignError('');
     setAssignSuccess('');
+
+    if (!assignSelectedServiceId) {
+      setAssignError('Kripya ek Service select karein.');
+      return;
+    }
+
+    if (!assignSelectedOperatorId) {
+      setAssignError('Kripya ek Operator select karein.');
+      return;
+    }
+
+    const mode = getSelectedServiceMode();
+    if (mode === 'area_wise' && (!assignAreaLabel || !assignAreaLabel.trim())) {
+      setAssignError('Office / Area Name enter karna mandatory hai (Area Wise mode ke liye).');
+      return;
+    }
+
+    if (mode === 'ward_wise') {
+      if (!assignWardNo || isNaN(Number(assignWardNo))) {
+        setAssignError('Valid Gwalior Ward Number (1-100) enter karna mandatory hai (Ward Wise mode ke liye).');
+        return;
+      }
+      const wardNum = parseInt(assignWardNo, 10);
+      if (wardNum < 1 || wardNum > 100) {
+        setAssignError('Ward Number 1 se 100 ke beech hona chahiye.');
+        return;
+      }
+    }
+
+    setAssignSubmitting(true);
     try {
       const res = await apiClient.post('/operator-assignments', {
         operator_id: assignSelectedOperatorId,
         service_id: assignSelectedServiceId,
-        area_label: assignAreaLabel || null,
-        ward_no: assignWardNo || null
+        area_label: mode === 'area_wise' ? assignAreaLabel.trim() : null,
+        ward_no: mode === 'ward_wise' ? String(assignWardNo).trim() : null
       });
       if (res.data.status === 'success') {
-        setAssignSuccess(res.data.message || 'Operator assigned successfully!');
+        setAssignSuccess(res.data.message || 'Operator successfully assigned to service!');
         setAssignSelectedServiceId('');
         setAssignSelectedOperatorId('');
         setAssignAreaLabel('');
         setAssignWardNo('');
         await fetchAssignments();
-        setTimeout(() => setAssignSuccess(''), 3000);
+        setTimeout(() => setAssignSuccess(''), 4000);
       }
     } catch (err: any) {
       setAssignError(err.response?.data?.message || 'Failed to assign operator.');
@@ -553,15 +581,14 @@ export default function AdminServices() {
           {fields.map((field, fIdx) => (
             <div
               key={field.id}
-              className={`p-3 rounded-xl border transition-all ${
-                field.type === 'file'
+              className={`p-3 rounded-xl border transition-all ${field.type === 'file'
                   ? field.docUploader === 'shop'
                     ? 'bg-emerald-50/40 border-emerald-200'
                     : 'bg-blue-50/40 border-blue-200'
                   : field.type === 'select'
-                  ? 'bg-indigo-50/40 border-indigo-200'
-                  : 'bg-slate-50/70 border-slate-200'
-              }`}
+                    ? 'bg-indigo-50/40 border-indigo-200'
+                    : 'bg-slate-50/70 border-slate-200'
+                }`}
             >
               <div className="flex items-center justify-between border-b border-slate-200/60 pb-1.5 mb-2">
                 <div className="flex items-center gap-2">
@@ -758,11 +785,10 @@ export default function AdminServices() {
                   </label>
 
                   {f.type === 'file' ? (
-                    <div className={`p-2 rounded-xl border border-dashed flex items-center justify-between text-xs ${
-                      f.docUploader === 'shop'
+                    <div className={`p-2 rounded-xl border border-dashed flex items-center justify-between text-xs ${f.docUploader === 'shop'
                         ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300'
                         : 'border-blue-500/50 bg-blue-500/10 text-blue-300'
-                    }`}>
+                      }`}>
                       <div className="flex items-center gap-1.5">
                         <Upload className="h-3.5 w-3.5" />
                         <span className="text-[10px] font-medium">
@@ -875,51 +901,46 @@ export default function AdminServices() {
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
               <button
                 onClick={() => setFilterType('all')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${
-                  filterType === 'all'
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${filterType === 'all'
                     ? 'bg-blue-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
+                  }`}
               >
                 All ({services.length})
               </button>
               <button
                 onClick={() => setFilterType('direct')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${
-                  filterType === 'direct'
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${filterType === 'direct'
                     ? 'bg-blue-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
+                  }`}
               >
                 Direct Forms ({services.filter(s => !s.hasSubServices).length})
               </button>
               <button
                 onClick={() => setFilterType('sub')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${
-                  filterType === 'sub'
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${filterType === 'sub'
                     ? 'bg-blue-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
+                  }`}
               >
                 Sub-Services ({services.filter(s => s.hasSubServices).length})
               </button>
               <button
                 onClick={() => setFilterType('active')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${
-                  filterType === 'active'
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${filterType === 'active'
                     ? 'bg-emerald-600 text-white shadow-xs'
                     : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                }`}
+                  }`}
               >
                 Active ({services.filter(s => s.isActive).length})
               </button>
               <button
                 onClick={() => setFilterType('disabled')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${
-                  filterType === 'disabled'
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 cursor-pointer ${filterType === 'disabled'
                     ? 'bg-slate-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                }`}
+                  }`}
               >
                 Disabled ({services.filter(s => !s.isActive).length})
               </button>
@@ -1021,8 +1042,8 @@ export default function AdminServices() {
                               const key = mode === 'single'
                                 ? `${a.operatorId}`
                                 : mode === 'area_wise'
-                                ? `${a.operatorId}_${a.areaLabel || ''}`
-                                : `${a.operatorId}_${a.wardNo || ''}`;
+                                  ? `${a.operatorId}_${a.areaLabel || ''}`
+                                  : `${a.operatorId}_${a.wardNo || ''}`;
                               if (!uniqueMap.has(key)) {
                                 uniqueMap.set(key, a);
                               }
@@ -1116,11 +1137,10 @@ export default function AdminServices() {
                         <td className="py-3.5 px-4">
                           <button
                             onClick={() => handleToggle(service)}
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase transition-all cursor-pointer ${
-                              service.isActive
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase transition-all cursor-pointer ${service.isActive
                                 ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                                 : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                            }`}
+                              }`}
                           >
                             {service.isActive ? 'ACTIVE' : 'DISABLED'}
                           </button>
@@ -1190,9 +1210,8 @@ export default function AdminServices() {
                   <button
                     type="button"
                     onClick={() => setShowLivePreview(!showLivePreview)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                      showLivePreview ? 'bg-white text-blue-800 shadow-xs' : 'bg-white/20 text-white hover:bg-white/30'
-                    }`}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${showLivePreview ? 'bg-white text-blue-800 shadow-xs' : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
                     title="Toggle Live Retailer Preview"
                   >
                     <Smartphone className="h-3.5 w-3.5" />
@@ -1217,13 +1236,11 @@ export default function AdminServices() {
                     <button
                       type="button"
                       onClick={() => setWizardStep(1)}
-                      className={`flex items-center gap-2 text-xs font-bold cursor-pointer transition-colors ${
-                        wizardStep === 1 ? 'text-blue-700' : wizardStep > 1 ? 'text-emerald-700' : 'text-slate-400'
-                      }`}
+                      className={`flex items-center gap-2 text-xs font-bold cursor-pointer transition-colors ${wizardStep === 1 ? 'text-blue-700' : wizardStep > 1 ? 'text-emerald-700' : 'text-slate-400'
+                        }`}
                     >
-                      <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
-                        wizardStep === 1 ? 'bg-blue-600 text-white shadow-xs' : wizardStep > 1 ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
-                      }`}>
+                      <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold ${wizardStep === 1 ? 'bg-blue-600 text-white shadow-xs' : wizardStep > 1 ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                        }`}>
                         {wizardStep > 1 ? <Check className="h-3.5 w-3.5" /> : '1'}
                       </span>
                       <span>1. Basic Details</span>
@@ -1237,13 +1254,11 @@ export default function AdminServices() {
                       onClick={() => {
                         if (validateStep(1)) setWizardStep(2);
                       }}
-                      className={`flex items-center gap-2 text-xs font-bold cursor-pointer transition-colors ${
-                        wizardStep === 2 ? 'text-blue-700' : wizardStep > 2 ? 'text-emerald-700' : 'text-slate-400'
-                      }`}
+                      className={`flex items-center gap-2 text-xs font-bold cursor-pointer transition-colors ${wizardStep === 2 ? 'text-blue-700' : wizardStep > 2 ? 'text-emerald-700' : 'text-slate-400'
+                        }`}
                     >
-                      <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
-                        wizardStep === 2 ? 'bg-blue-600 text-white shadow-xs' : wizardStep > 2 ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
-                      }`}>
+                      <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold ${wizardStep === 2 ? 'bg-blue-600 text-white shadow-xs' : wizardStep > 2 ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                        }`}>
                         {wizardStep > 2 ? <Check className="h-3.5 w-3.5" /> : '2'}
                       </span>
                       <span>2. Pricing & Sub-Services</span>
@@ -1257,13 +1272,11 @@ export default function AdminServices() {
                       onClick={() => {
                         if (validateStep(1) && validateStep(2)) setWizardStep(3);
                       }}
-                      className={`flex items-center gap-2 text-xs font-bold cursor-pointer transition-colors ${
-                        wizardStep === 3 ? 'text-blue-700' : 'text-slate-400'
-                      }`}
+                      className={`flex items-center gap-2 text-xs font-bold cursor-pointer transition-colors ${wizardStep === 3 ? 'text-blue-700' : 'text-slate-400'
+                        }`}
                     >
-                      <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
-                        wizardStep === 3 ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-200 text-slate-600'
-                      }`}>
+                      <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold ${wizardStep === 3 ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-200 text-slate-600'
+                        }`}>
                         3
                       </span>
                       <span>3. Form Builder & Docs</span>
@@ -1474,17 +1487,15 @@ export default function AdminServices() {
                               <div
                                 key={sub.id}
                                 onClick={() => setSelectedSubIndex(sIdx)}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-2 border ${
-                                  selectedSubIndex === sIdx
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-2 border ${selectedSubIndex === sIdx
                                     ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
                                     : 'bg-white text-slate-700 hover:bg-slate-50 border-slate-200'
-                                }`}
+                                  }`}
                               >
                                 <span>{sub.name || `Sub-Service ${sIdx + 1}`}</span>
                                 {sub.fee ? (
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                                    selectedSubIndex === sIdx ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                                  }`}>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${selectedSubIndex === sIdx ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                                    }`}>
                                     ₹{sub.fee}
                                   </span>
                                 ) : null}
@@ -1494,9 +1505,8 @@ export default function AdminServices() {
                                     e.stopPropagation();
                                     handleRemoveSubService(sIdx);
                                   }}
-                                  className={`p-0.5 rounded hover:text-red-500 ${
-                                    selectedSubIndex === sIdx ? 'text-white/70 hover:text-white' : 'text-slate-400'
-                                  }`}
+                                  className={`p-0.5 rounded hover:text-red-500 ${selectedSubIndex === sIdx ? 'text-white/70 hover:text-white' : 'text-slate-400'
+                                    }`}
                                   title="Delete sub-service"
                                 >
                                   <X className="h-3 w-3" />
@@ -1617,27 +1627,7 @@ export default function AdminServices() {
                                     />
                                   </div>
 
-                                  <div className="sm:col-span-12 pt-2 border-t border-slate-100">
-                                    <div className="flex items-center justify-between">
-                                      <label className="block text-[11px] font-bold text-slate-700">
-                                        Operator Assignment Mode
-                                      </label>
-                                      <select
-                                        value={currentSub.operatorAssignmentMode || 'single'}
-                                        onChange={e => {
-                                          const updated = [...subServices];
-                                          updated[selectedSubIndex].operatorAssignmentMode = e.target.value as 'single' | 'area_wise' | 'ward_wise';
-                                          setSubServices(updated);
-                                        }}
-                                        disabled={isEditMode}
-                                        className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-slate-100"
-                                      >
-                                        <option value="single">Single Operator (Pure Gwalior)</option>
-                                        <option value="area_wise">Area / Office Wise (Multiple Offices)</option>
-                                        <option value="ward_wise">Ward Wise (Gwalior Wards)</option>
-                                      </select>
-                                    </div>
-                                  </div>
+                                  {/*  */}
                                 </div>
                               </div>
 
@@ -1931,11 +1921,10 @@ export default function AdminServices() {
                                   key={sub.id}
                                   type="button"
                                   onClick={() => setSelectedSubIndex(sIdx)}
-                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                                    selectedSubIndex === sIdx
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${selectedSubIndex === sIdx
                                       ? 'bg-indigo-600 text-white shadow-xs'
                                       : 'bg-white text-indigo-800 hover:bg-indigo-100 border border-indigo-200'
-                                  }`}
+                                    }`}
                                 >
                                   {sub.name || `Sub-Service ${sIdx + 1}`} ({sub.formFields?.length || 0})
                                 </button>
@@ -2070,13 +2059,12 @@ export default function AdminServices() {
                             {f.required && <span className="text-rose-500 ml-1 font-bold">*</span>}
                             {f.placeholder && <p className="text-[10px] text-slate-400">{f.placeholder}</p>}
                           </div>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            f.type === 'file'
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${f.type === 'file'
                               ? f.docUploader === 'shop'
                                 ? 'bg-emerald-100 text-emerald-800'
                                 : 'bg-blue-100 text-blue-800'
                               : 'bg-slate-200 text-slate-700'
-                          }`}>
+                            }`}>
                             {f.type === 'file' ? `DOC: ${f.docUploader?.toUpperCase()}` : f.type.toUpperCase()}
                           </span>
                         </div>
@@ -2172,8 +2160,8 @@ export default function AdminServices() {
                         <div className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 p-2.5 rounded-lg border border-indigo-200">
                           ⚡ Routing Mode: <span className="uppercase font-bold">{mode.replace('_', ' ')}</span> — {
                             mode === 'single' ? 'This operator will handle ALL requests across Gwalior.' :
-                            mode === 'area_wise' ? 'Operator will handle requests for a specific office/area.' :
-                            'Operator will handle requests for a specific Gwalior ward.'
+                              mode === 'area_wise' ? 'Operator will handle requests for a specific office/area.' :
+                                'Operator will handle requests for a specific Gwalior ward.'
                           }
                         </div>
 
@@ -2252,48 +2240,6 @@ export default function AdminServices() {
                   </button>
                 </form>
 
-                {/* Existing Assignments List */}
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5">
-                    <Layers className="h-4 w-4 text-blue-600" />
-                    <span>All Current Assignments ({allAssignments.length})</span>
-                  </h4>
-
-                  {allAssignments.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                      No operator assignments yet. Assign operators to services above.
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-                      {allAssignments.map((a: any) => (
-                        <div key={a.id} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl shadow-2xs">
-                          <div>
-                            <div className="font-bold text-xs text-slate-800">
-                              {a.serviceName}{a.subServiceName ? ` › ${a.subServiceName}` : ''}
-                            </div>
-                            <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5 flex-wrap">
-                              <span className="font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
-                                {a.operatorName}
-                              </span>
-                              <span className="uppercase font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                {(a.assignmentMode || 'single').replace('_', ' ')}
-                              </span>
-                              {a.assignmentMode === 'area_wise' && a.areaLabel && <span className="font-medium text-slate-700">📍 {a.areaLabel}</span>}
-                              {a.assignmentMode === 'ward_wise' && a.wardNo && <span className="font-medium text-slate-700">🏢 Ward #{a.wardNo}</span>}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleDeleteAssignment(a.id)}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer shrink-0"
-                            title="Remove Assignment"
-                          >
-                            <Trash2Icon className="h-4 w-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
 
               {/* Modal Footer */}

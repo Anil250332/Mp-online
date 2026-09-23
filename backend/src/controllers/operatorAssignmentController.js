@@ -124,9 +124,29 @@ export const createAssignment = async (req, res) => {
       serviceName = sRows[0].name;
       routingMode = sRows[0].operator_assignment_mode || 'single';
 
-      const [subRows] = await pool.query('SELECT id, name FROM sub_services WHERE service_id = ?', [serviceId]);
+      let [subRows] = await pool.query('SELECT id, name FROM sub_services WHERE service_id = ?', [serviceId]);
+      
+      // If service has no explicit sub-services, auto-create default sub-service row so operator assignment works seamlessly
       if (subRows.length === 0) {
-        return res.status(400).json({ status: 'error', message: 'No sub-services found for this service.' });
+        const [sInfo] = await pool.query('SELECT name, code, fee, admin_commission_percentage, form_schema FROM services WHERE id = ?', [serviceId]);
+        if (sInfo.length > 0) {
+          const sName = sInfo[0].name;
+          const code = sInfo[0].code || `SRV-${serviceId}`;
+          const fee = parseFloat(sInfo[0].fee || 0);
+          const comm = parseFloat(sInfo[0].admin_commission_percentage || 0);
+          const schema = sInfo[0].form_schema || '[]';
+          const adminProfit = (fee * comm) / 100;
+          const operatorShare = fee - adminProfit;
+
+          const [insertRes] = await pool.query(
+            `INSERT INTO sub_services (service_id, name, code, fee, agent_fee, operator_share, distributor_share, admin_profit, admin_commission_percentage, form_schema, required_docs, operator_assignment_mode, created_by, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, 1, true)`,
+            [serviceId, sName, code, fee, fee, operatorShare, adminProfit, comm, schema, routingMode]
+          );
+          subRows = [{ id: insertRes.insertId, name: sName }];
+        } else {
+          return res.status(404).json({ status: 'error', message: 'Service not found.' });
+        }
       }
       targetSubServices = subRows;
     } else if (subServiceId) {

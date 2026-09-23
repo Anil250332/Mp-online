@@ -264,7 +264,7 @@ export const addService = async (req, res) => {
     // Update service code to SRV-{id}
     await connection.query('UPDATE services SET code = ? WHERE id = ?', [serviceCode, serviceId]);
 
-    // If Sub-services exist, insert them
+    // If Sub-services exist, insert them; otherwise insert default single sub-service row
     if (hasSubServices && Array.isArray(subServices) && subServices.length > 0) {
       for (let i = 0; i < subServices.length; i++) {
         const sub = subServices[i];
@@ -302,6 +302,28 @@ export const addService = async (req, res) => {
         // Update sub-service code to SRV-{serviceId}-{subId}
         await connection.query('UPDATE sub_services SET code = ? WHERE id = ?', [subCode, subId]);
       }
+    } else {
+      // Direct Service: Create default sub_service entry matching parent service
+      const adminProfit = (parsedFee * parsedComm) / 100;
+      const operatorShare = parsedFee - adminProfit;
+      await connection.query(
+        `INSERT INTO sub_services (
+          service_id, name, code, icon_url, fee, agent_fee, operator_share, distributor_share, admin_profit, admin_commission_percentage, form_schema, required_docs, operator_assignment_mode, created_by, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, 1, true)`,
+        [
+          serviceId,
+          name.trim(),
+          serviceCode,
+          iconUrl || '',
+          parsedFee,
+          parsedFee,
+          operatorShare,
+          adminProfit,
+          parsedComm,
+          formSchemaJson,
+          operatorAssignmentMode || 'single'
+        ]
+      );
     }
 
     await connection.commit();
@@ -426,6 +448,29 @@ export const updateService = async (req, res) => {
         // Update sub-service code to SRV-{serviceId}-{subId}
         await connection.query('UPDATE sub_services SET code = ? WHERE id = ?', [subCode, subId]);
       }
+    } else {
+      // Direct Service: Create default sub_service entry matching parent service
+      const adminProfit = (parsedFee * parsedComm) / 100;
+      const operatorShare = parsedFee - adminProfit;
+      const serviceCode = `SRV-${id}`;
+      await connection.query(
+        `INSERT INTO sub_services (
+          service_id, name, code, icon_url, fee, agent_fee, operator_share, distributor_share, admin_profit, admin_commission_percentage, form_schema, required_docs, operator_assignment_mode, created_by, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, 1, true)`,
+        [
+          id,
+          name.trim(),
+          serviceCode,
+          iconUrl || '',
+          parsedFee,
+          parsedFee,
+          operatorShare,
+          adminProfit,
+          parsedComm,
+          formSchemaJson,
+          operatorAssignmentMode || 'single'
+        ]
+      );
     }
 
     await connection.commit();
