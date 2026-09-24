@@ -33,12 +33,16 @@ class ComplaintStoreService {
     this.syncBackend();
   }
 
+
+
   public clearUser() {
     this.currentUserId = '';
     this.complaints = [];
     this.notify();
   }
 
+
+  
   public async syncBackend() {
     try {
       const response = await apiClient.get('/complaints');
