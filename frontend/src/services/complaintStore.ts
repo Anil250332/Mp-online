@@ -21,21 +21,7 @@ class ComplaintStoreService {
   private currentUserId: string = '';
 
   constructor() {
-    this.initFromLocalUser();
-  }
-
-  private initFromLocalUser() {
-    try {
-      const userStr = localStorage.getItem('v2online_user');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        this.currentUserId = user.id?.toString() || '';
-        this.loadFromStorage();
-        this.syncBackend();
-      }
-    } catch {
-      // No user logged in yet
-    }
+    this.syncBackend();
   }
 
   public setUser(userId: string | number) {
@@ -43,7 +29,6 @@ class ComplaintStoreService {
     if (this.currentUserId !== newId) {
       this.currentUserId = newId;
       this.complaints = [];
-      this.loadFromStorage();
     }
     this.syncBackend();
   }
@@ -54,42 +39,16 @@ class ComplaintStoreService {
     this.notify();
   }
 
-  private getStorageKey(): string {
-    return `v2online_complaints_${this.currentUserId}`;
-  }
-
   public async syncBackend() {
     try {
       const response = await apiClient.get('/complaints');
       if (response.data.status === 'success' && Array.isArray(response.data.data)) {
         this.complaints = response.data.data;
-        this.saveToStorage();
+        this.notify();
       }
     } catch {
-      // Offline fallback
+      // API error handling
     }
-  }
-
-  private loadFromStorage() {
-    if (!this.currentUserId) return;
-    try {
-      const saved = localStorage.getItem(this.getStorageKey());
-      if (saved) {
-        this.complaints = JSON.parse(saved);
-      }
-    } catch {
-      this.complaints = [];
-    }
-  }
-
-  private saveToStorage() {
-    if (!this.currentUserId) return;
-    try {
-      localStorage.setItem(this.getStorageKey(), JSON.stringify(this.complaints));
-    } catch (e) {
-      console.error('Failed to save complaints to storage', e);
-    }
-    this.notify();
   }
 
   public subscribe(listener: () => void) {
@@ -194,12 +153,12 @@ class ComplaintStoreService {
     };
 
     this.complaints.unshift(newTicket);
-    this.saveToStorage();
+    this.notify();
     return newTicket;
   }
 
   // Admin / Manager Update Complaint Status & Resolution
-  public updateStatus(ticketId: string, status: 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'CLOSED', resolutionNote?: string, resolvedBy?: string) {
+  public async updateStatus(ticketId: string, status: 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'CLOSED', resolutionNote?: string, resolvedBy?: string) {
     this.complaints = this.complaints.map(c => {
       if (c.id === ticketId) {
         return {
@@ -211,13 +170,18 @@ class ComplaintStoreService {
       }
       return c;
     });
-    this.saveToStorage();
+    this.notify();
 
     // Async sync to backend
-    apiClient.patch(`/complaints/${ticketId}/status`, {
-      status,
-      resolutionNote
-    }).catch(() => {});
+    try {
+      await apiClient.patch(`/complaints/${ticketId}/status`, {
+        status,
+        resolutionNote
+      });
+      await this.syncBackend();
+    } catch (e) {
+      console.error('Failed to update complaint status in backend', e);
+    }
   }
 }
 

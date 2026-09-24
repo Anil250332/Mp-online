@@ -18,14 +18,11 @@ export interface Shop {
   approvedAt?: string;
 }
 
-const STORAGE_KEY = 'v2online_shops_db';
-
 class ShopStoreService {
   private shops: Shop[] = [];
   private listeners: (() => void)[] = [];
 
   constructor() {
-    this.loadFromStorage();
     this.syncBackend();
   }
 
@@ -34,33 +31,11 @@ class ShopStoreService {
       const response = await apiClient.get('/shops');
       if (response.data.status === 'success' && Array.isArray(response.data.data)) {
         this.shops = response.data.data;
-        this.saveToStorage();
+        this.notify();
       }
     } catch (e) {
       console.error('Failed to sync shops from backend API:', e);
     }
-  }
-
-  private loadFromStorage() {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        this.shops = JSON.parse(saved);
-      } else {
-        this.shops = [];
-      }
-    } catch {
-      this.shops = [];
-    }
-  }
-
-  private saveToStorage() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.shops));
-    } catch (e) {
-      console.error('Failed to save shops to storage', e);
-    }
-    this.notify();
   }
 
   public subscribe(listener: () => void) {
@@ -79,34 +54,24 @@ class ShopStoreService {
   }
 
   // Self-Registration Form Submission -> PENDING
-  public addSelfRegisteredShop(data: {
+  public async addSelfRegisteredShop(data: {
     ownerName: string;
     shopName: string;
     mobile: string;
     email: string;
     aadhaar: string;
     address: string;
-  }): Shop {
-    const year = new Date().getFullYear();
-    const nowStr = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
-    const newShop: Shop = {
-      id: Date.now().toString(),
-      shopCode: `SHOP-${year}-${1000 + this.shops.length + 1}`,
-      ownerName: data.ownerName,
-      shopName: data.shopName,
-      mobile: data.mobile,
-      email: data.email || 'N/A',
-      aadhaar: data.aadhaar || 'N/A',
-      address: data.address,
-      status: 'PENDING',
-      registrationType: 'SELF_REGISTER',
-      createdAt: nowStr,
-      requestedAt: nowStr
-    };
-
-    this.shops.unshift(newShop);
-    this.saveToStorage();
-    return newShop;
+  }): Promise<Shop | null> {
+    try {
+      const response = await apiClient.post('/shops/self-register', data);
+      await this.syncBackend();
+      if (response.data.status === 'success' && response.data.data) {
+        return response.data.data;
+      }
+    } catch (e) {
+      console.error('Failed to self-register shop via API:', e);
+    }
+    return null;
   }
 
   // Distributor Add New Shop Modal -> ACTIVE (API-first)
@@ -118,8 +83,7 @@ class ShopStoreService {
     aadhaar: string;
     address: string;
     password: string;
-  }): Promise<Shop> {
-    // Call API first to create in database
+  }): Promise<Shop | null> {
     try {
       const response = await apiClient.post('/shops', {
         ownerName: data.ownerName,
@@ -131,102 +95,57 @@ class ShopStoreService {
         password: data.password
       });
 
-      // Re-sync from backend
       await this.syncBackend();
 
       if (response.data.status === 'success' && response.data.data) {
         const shop = this.shops.find(s => s.shopCode === response.data.data.shopCode);
         if (shop) return shop;
+        return response.data.data;
       }
     } catch (e) {
       console.error('Failed to add shop via API:', e);
     }
-
-    // Fallback: add locally
-    const year = new Date().getFullYear();
-    const nowStr = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
-    const shopCode = `SHOP-${year}-${1000 + this.shops.length + 1}`;
-    const newShop: Shop = {
-      id: Date.now().toString(),
-      shopCode,
-      ownerName: data.ownerName,
-      shopName: data.shopName,
-      mobile: data.mobile,
-      email: data.email || 'N/A',
-      aadhaar: data.aadhaar || 'N/A',
-      address: data.address,
-      password: data.password,
-      status: 'ACTIVE',
-      registrationType: 'DISTRIBUTOR_ADDED',
-      createdAt: nowStr,
-      requestedAt: nowStr,
-      approvedAt: nowStr
-    };
-
-    this.shops.unshift(newShop);
-    this.saveToStorage();
-    return newShop;
+    return null;
   }
 
   // Approve Pending Shop
-  public approveShop(shopId: string) {
-    const nowStr = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
-    this.shops = this.shops.map(s => {
-      if (s.id === shopId) {
-        return { ...s, status: 'ACTIVE', approvedAt: nowStr };
-      }
-      return s;
-    });
-    this.saveToStorage();
-
-    apiClient.patch(`/shops/${shopId}/approve`).then(() => {
-      this.syncBackend();
-    }).catch(() => {});
+  public async approveShop(shopId: string) {
+    try {
+      await apiClient.patch(`/shops/${shopId}/approve`);
+      await this.syncBackend();
+    } catch (e) {
+      console.error('Failed to approve shop:', e);
+    }
   }
 
   // Reject Pending Shop
-  public rejectShop(shopId: string) {
-    this.shops = this.shops.map(s => {
-      if (s.id === shopId) {
-        return { ...s, status: 'INACTIVE' };
-      }
-      return s;
-    });
-    this.saveToStorage();
-
-    apiClient.patch(`/shops/${shopId}/reject`).then(() => {
-      this.syncBackend();
-    }).catch(() => {});
+  public async rejectShop(shopId: string) {
+    try {
+      await apiClient.patch(`/shops/${shopId}/reject`);
+      await this.syncBackend();
+    } catch (e) {
+      console.error('Failed to reject shop:', e);
+    }
   }
 
   // Request Shop Deletion by Distributor
-  public requestDeletion(shopId: string, reason: string) {
-    this.shops = this.shops.map(s => {
-      if (s.id === shopId) {
-        return { ...s, status: 'DELETE_REQUESTED', deleteReason: reason };
-      }
-      return s;
-    });
-    this.saveToStorage();
-
-    apiClient.post(`/shops/${shopId}/request-delete`, { reason }).then(() => {
-      this.syncBackend();
-    }).catch(() => {});
+  public async requestDeletion(shopId: string, reason: string) {
+    try {
+      await apiClient.post(`/shops/${shopId}/request-delete`, { reason });
+      await this.syncBackend();
+    } catch (e) {
+      console.error('Failed to request deletion:', e);
+    }
   }
 
   // Admin Approves Deletion Request -> Sets Status to INACTIVE (Login Blocked)
-  public approveDeletion(shopId: string) {
-    this.shops = this.shops.map(s => {
-      if (s.id === shopId) {
-        return { ...s, status: 'INACTIVE' };
-      }
-      return s;
-    });
-    this.saveToStorage();
-
-    apiClient.patch(`/shops/${shopId}/approve-deletion`).then(() => {
-      this.syncBackend();
-    }).catch(() => {});
+  public async approveDeletion(shopId: string) {
+    try {
+      await apiClient.patch(`/shops/${shopId}/approve-deletion`);
+      await this.syncBackend();
+    } catch (e) {
+      console.error('Failed to approve deletion:', e);
+    }
   }
 }
 

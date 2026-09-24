@@ -68,6 +68,10 @@ export default function ShopList() {
     }
 
     const created = await shopStore.addActiveShopByDistributor(formData);
+    if (!created) {
+      setFormError('Failed to create shop on server. Please check details and try again.');
+      return;
+    }
 
     setSuccessMsg(`Shop "${created.shopName}" added successfully! The owner can now log in at /login using Mobile: ${created.mobile}`);
     setFormData({

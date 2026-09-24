@@ -25,21 +25,7 @@ class WalletStoreService {
   private currentUserId: string = '';
 
   constructor() {
-    this.initFromLocalUser();
-  }
-
-  private initFromLocalUser() {
-    try {
-      const userStr = localStorage.getItem('v2online_user');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        this.currentUserId = user.id?.toString() || '';
-        this.loadFromStorage();
-        this.syncBackend();
-      }
-    } catch {
-      // No user logged in yet
-    }
+    this.syncBackend();
   }
 
   public setUser(userId: string | number) {
@@ -48,7 +34,6 @@ class WalletStoreService {
       this.currentUserId = newId;
       this.balance = 0;
       this.transactions = [];
-      this.loadFromStorage();
     }
     this.syncBackend();
   }
@@ -58,10 +43,6 @@ class WalletStoreService {
     this.balance = 0;
     this.transactions = [];
     this.notify();
-  }
-
-  private getStorageKey(suffix: string): string {
-    return `v2online_wallet_${suffix}_${this.currentUserId}`;
   }
 
   public async syncBackend() {
@@ -84,75 +65,11 @@ class WalletStoreService {
             };
           });
         }
-        this.saveToStorage();
+        this.notify();
       }
     } catch {
-      // Offline fallback
+      // Backend not reached or unauthenticated
     }
-  }
-
-  private loadFromStorage() {
-    if (!this.currentUserId) return;
-    try {
-      const savedBal = localStorage.getItem(this.getStorageKey('balance'));
-      if (savedBal) this.balance = parseFloat(savedBal);
-
-      const savedTxns = localStorage.getItem(this.getStorageKey('txns'));
-      if (savedTxns) {
-        const parsed = JSON.parse(savedTxns);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          this.transactions = parsed;
-        } else {
-          this.populateDefaults();
-        }
-      } else {
-        this.populateDefaults();
-      }
-    } catch {
-      this.populateDefaults();
-    }
-  }
-
-  private populateDefaults() {
-    this.balance = 2100.00;
-    this.transactions = [
-      {
-        id: 'txn-1004',
-        txnNo: 'TXN-2026-1004',
-        type: 'DEBIT',
-        category: 'service_fee',
-        amount: 400.00,
-        openingBalance: 2500.00,
-        closingBalance: 2100.00,
-        remarks: 'Service Fee for MP Samagra ID Services',
-        appId: 'TSK-2026-1004',
-        status: 'SUCCESS',
-        createdAt: '19 Sept 2026, 01:06 am'
-      },
-      {
-        id: 'txn-1003',
-        txnNo: 'TXN-2026-1003',
-        type: 'CREDIT',
-        category: 'topup',
-        amount: 2000.00,
-        openingBalance: 500.00,
-        closingBalance: 2500.00,
-        remarks: 'Wallet Auto UPI Topup',
-        status: 'SUCCESS',
-        createdAt: '19 Sept 2026, 12:35 am'
-      }
-    ];
-  }
-
-  private saveToStorage() {
-    if (!this.currentUserId) return;
-    try {
-      localStorage.setItem(this.getStorageKey('balance'), this.balance.toString());
-      localStorage.setItem(this.getStorageKey('txns'), JSON.stringify(this.transactions));
-    } catch (e) {
-      console.error('Failed to save wallet data to storage', e);
-    }
-    this.notify();
   }
 
   public subscribe(listener: () => void) {
@@ -190,30 +107,13 @@ class WalletStoreService {
           message: response.data.message || `₹${rechargeAmt.toFixed(2)} aapke wallet me add ho gaye hain!`
         };
       }
-    } catch {
-      // Offline fallback below
+      return { success: false, message: response.data.message || 'Recharge request failed.' };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.response?.data?.message || 'Server error while recharging wallet.'
+      };
     }
-
-    const opening = this.balance;
-    const closing = opening + rechargeAmt;
-    this.balance = closing;
-
-    const newTxn: WalletTransaction = {
-      id: Date.now().toString(),
-      txnNo: `TXN-2026-${1000 + this.transactions.length + 1}`,
-      type: 'CREDIT',
-      category: 'topup',
-      amount: rechargeAmt,
-      openingBalance: opening,
-      closingBalance: closing,
-      remarks: remarks || 'Wallet Auto UPI Topup',
-      status: 'SUCCESS',
-      createdAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-    };
-
-    this.transactions.unshift(newTxn);
-    this.saveToStorage();
-    return { success: true, message: `₹${rechargeAmt.toFixed(2)} wallet me add kar diye gaye hain!` };
   }
 
   // Deduct Wallet Balance for Service Application
@@ -221,10 +121,6 @@ class WalletStoreService {
     const deductAmt = parseFloat(amount.toString());
     if (isNaN(deductAmt) || deductAmt <= 0) {
       return { success: false, message: 'Invalid deduction amount.' };
-    }
-
-    if (this.balance < deductAmt) {
-      return { success: false, message: `Insufficient wallet balance! Available ₹${this.balance.toFixed(2)}, required ₹${deductAmt.toFixed(2)}.` };
     }
 
     try {
@@ -236,31 +132,13 @@ class WalletStoreService {
           message: response.data.message || `₹${deductAmt.toFixed(2)} deducted for ${serviceName}.`
         };
       }
-    } catch {
-      // Offline fallback below
+      return { success: false, message: response.data.message || 'Wallet deduction failed.' };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.response?.data?.message || `Insufficient wallet balance! Available ₹${this.balance.toFixed(2)}, required ₹${deductAmt.toFixed(2)}.`
+      };
     }
-
-    const opening = this.balance;
-    const closing = opening - deductAmt;
-    this.balance = closing;
-
-    const newTxn: WalletTransaction = {
-      id: Date.now().toString(),
-      txnNo: `TXN-2026-${1000 + this.transactions.length + 1}`,
-      type: 'DEBIT',
-      category: 'service_fee',
-      amount: deductAmt,
-      openingBalance: opening,
-      closingBalance: closing,
-      remarks: `Service Fee for ${serviceName}`,
-      appId: appId || undefined,
-      status: 'SUCCESS',
-      createdAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-    };
-
-    this.transactions.unshift(newTxn);
-    this.saveToStorage();
-    return { success: true, message: `₹${deductAmt.toFixed(2)} service fee deduct kar li gayi hai!` };
   }
 
   // Auto-Refund Wallet for Rejected Service Application
@@ -284,34 +162,17 @@ class WalletStoreService {
       });
       if (response.data.status === 'success') {
         await this.syncBackend();
-        return { success: true, message: response.data.message };
+        return { success: true, message: response.data.message || 'Refund processed successfully.' };
       }
-    } catch {
-      // Offline fallback below
+      return { success: false, message: response.data.message || 'Refund failed.' };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.response?.data?.message || 'Failed to process refund on server.'
+      };
     }
-
-    const opening = this.balance;
-    const closing = opening + refundAmt;
-    this.balance = closing;
-
-    const newTxn: WalletTransaction = {
-      id: Date.now().toString(),
-      txnNo: `TXN-2026-${1000 + this.transactions.length + 1}`,
-      type: 'CREDIT',
-      category: 'refund',
-      amount: refundAmt,
-      openingBalance: opening,
-      closingBalance: closing,
-      remarks: `Refund: ${data.serviceName} ${data.remarks ? `(${data.remarks})` : 'Application Rejected'}`,
-      appId: data.appId || undefined,
-      status: 'SUCCESS',
-      createdAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-    };
-
-    this.transactions.unshift(newTxn);
-    this.saveToStorage();
-    return { success: true, message: `₹${refundAmt.toFixed(2)} application refund credited to shop wallet.` };
   }
 }
 
 export const walletStore = new WalletStoreService();
+

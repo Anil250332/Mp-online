@@ -73,14 +73,11 @@ export interface ServiceItem {
   createdAt?: string;
 }
 
-const STORAGE_KEY = 'v2online_services_catalog_v2';
-
 class ServiceStoreService {
   private services: ServiceItem[] = [];
   private listeners: (() => void)[] = [];
 
   constructor() {
-    this.loadFromStorage();
     this.syncBackend();
   }
 
@@ -89,33 +86,11 @@ class ServiceStoreService {
       const response = await apiClient.get('/services');
       if (response.data.status === 'success' && Array.isArray(response.data.data)) {
         this.services = response.data.data;
-        this.saveToStorage();
+        this.notify();
       }
     } catch {
-      // Offline fallback — keep localStorage data
+      // Backend offline or loading
     }
-  }
-
-  private loadFromStorage() {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        this.services = JSON.parse(saved);
-      } else {
-        this.services = [];
-      }
-    } catch {
-      this.services = [];
-    }
-  }
-
-  private saveToStorage() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.services));
-    } catch (e) {
-      console.error('Failed to save services to storage', e);
-    }
-    this.notify();
   }
 
   public subscribe(listener: () => void) {
