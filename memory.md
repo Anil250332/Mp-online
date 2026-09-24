@@ -242,5 +242,69 @@
 4. **Kya koi aur optimize tareeka hai (Optimization & Future Considerations):**
    - Node server (`http://localhost:5000`) and Vite dev server (`http://localhost:5173`) are running cleanly.
 
+---
+
+### 🗓️ 2026-09-23 23:30 - Full End-to-End Application Lifecycle & Real MySQL Flow Stabilization
+1. **Kya kiya (What was done):**
+   - **Backend Layered Architecture (`Routes ➔ Controller ➔ Service ➔ Repository ➔ MySQL DB`)**:
+     - **Repository Layer (`backend/src/repositories/applicationRepository.js`)**: Real raw SQL queries for transactional atomic wallet balance check and deduction, application creation with sequential application numbers (`APP-YYYYMMDD-XXXX`), document attachments tracking (`application_documents`), routing resolution (Single / Area-wise / Ward-wise), operator earnings ledger, auto-refund to agent on reject, and multi-filter queue retrieval.
+     - **Service Layer (`backend/src/services/applicationService.js`)**: Implemented complete business logic for routing matching, fee breakdown calculation (retail fee, admin commission %, net operator payout), deliverable document uploads, verification approvals, and rejection refunds.
+     - **Controller Layer (`backend/src/controllers/applicationController.js`)**: Multi-part form-data handlers (`multer`) saving citizen documents and final deliverable certificates into `uploads/applications/`.
+     - **Routes Layer (`backend/src/routes/applicationRoutes.js`)**: Mounted endpoints at `/api/applications` (`/apply`, `/my-requests`, `/operator-queue`, `/verification-queue`, `/:id/complete`, `/:id/verify`, `/:id/reject`) guarded by authentication and RBAC.
+     - **Server & Uploads Integration (`backend/src/server.js`)**: Static serve route `/uploads` enabled for secure document previews and downloads.
+   - **Wallet Security & Operator Withdrawal Endpoints**:
+     - Added strict role authorization on `/api/wallet/refund` so only `super_admin` or `manager` can manually refund.
+     - Implemented `/api/wallet/withdraw` for operators to submit payout requests with bank/UPI details.
+     - Implemented `/api/wallet/withdrawals` and `/api/wallet/withdrawals/:id/process` for Admin to approve/reject payouts.
+   - **Shop Auto-Registration Sync (`backend/src/controllers/authController.js`)**:
+     - Synchronized agent self-registrations to auto-populate the `shops` table with `user_id` foreign key.
+   - **Frontend Full-Stack Wiring (Zero LocalStorage Mock Dependency)**:
+     - `AgentServices.tsx`: Direct multipart `FormData` submission to `POST /api/applications/apply`.
+     - `AgentServiceRequests.tsx`: Connected to `GET /api/applications/my-requests` with download and live tracking.
+     - `OperatorDashboard.tsx` & `OperatorServiceRequests.tsx`: Connected to `GET /api/applications/operator-queue`, deliverable file upload to `POST /api/applications/:id/complete`, and refresh queue action.
+     - `OperatorWallet.tsx`: Connected to `POST /api/wallet/withdraw` with real-time balance and withdrawal request history.
+     - `AdminTaskVerification.tsx`: Connected to `GET /api/applications/verification-queue`, verify payout `PATCH /api/applications/:id/verify`, and reject/auto-refund `PATCH /api/applications/:id/reject`.
+     - `AdminWithdrawalRequests.tsx`: Connected to `GET /api/wallet/withdrawals` and `PATCH /api/wallet/withdrawals/:id/process`.
+     - `AdminServices.tsx`: Added live assignment list and deletion capabilities in Operator Assignment modal.
+   - **Build Verification**: Executed `npm run build` in `frontend/` — 1970 modules transformed with **0 Errors**.
+
+2. **Kyu kiya (Why it was done):**
+   - User requirement: Pure portal ka end-to-end flow bina kuch break kiye theek karna tha. Pehle application submissions aur task verifications browser ke `localStorage` me dummy data par dependent the jisse ek computer/browser se doosre par data nahi dikhta tha aur wallet balance atomic nahi tha. Isko eliminate karke real multi-user MySQL database aur backend layered architecture se connect karna tha.
+
+3. **Is se hua kya (Impact / Result):**
+   - Agent, Operator, aur Admin ke beech ka pura real-time lifecycle (Service Apply ➔ Agent Wallet Deduction ➔ Auto Routing to Operator ➔ Operator Work Completion with Certificate Upload ➔ Admin Verification & Operator Payout / Rejection Auto-Refund) completely database-driven and synchronized ho gaya hai.
+   - Real documents disk par save hote hain aur securely download/preview ho sakte hain.
+   - Frontend TypeScript build completely green (0 errors).
+
+4. **Kya koi aur optimize tareeka hai (Optimization & Future Considerations):**
+   - Real payment gateway (Cashfree / Razorpay UPI Webhook) and WhatsApp Cloud API integration for live automated applicant SMS/WhatsApp notifications.
+
+---
+
+### 🗓️ 2026-09-24 01:05 - Universal Complaint Route Synchronization Across All Panels
+1. **Kya kiya (What was done):**
+   - **Bug Analysis (Complaint Path Mismatch)**: Operator Panel me sidebar link `/operator/complaint` vs `/operator/complaints` path difference tha, jisse click karne par route match nahi ho raha tha aur user wapas dashboard redirect ho raha tha.
+   - **Dual Alias Support (`frontend/src/App.tsx`)**: Sabhi roles ke liye both singular (`/complaint`) aur plural (`/complaints`) routes register kiye:
+     - **Agent**: `/agent/complaint` & `/agent/complaints`
+     - **Operator**: `/operator/complaint` & `/operator/complaints`
+     - **Distributor**: `/distributor/complaint` & `/distributor/complaints`
+     - **Manager**: `/manager/complaints` & `/manager/complaint`
+     - **Admin**: `/admin/complaints` & `/admin/complaint`
+   - **Sidebar Link Standardization (`frontend/src/components/layout/DashboardLayout.tsx`)**: Har role ke sidebar me Complaint link ko standardize kiya gaya.
+   - **Build Verification**: `npm run build` executed and passed in 916ms with **0 Errors**.
+
+2. **Kyu kiya (Why it was done):**
+   - User issue: Panels par Complaint page gayab/redirect ho raha tha.
+
+3. **Is se hua kya (Impact / Result):**
+   - Ab chahe Agent ho, Operator ho, Distributor ho, Manager ho ya Super Admin — sabhi panels par Complaint page flawlessly open hota hai aur tickets create/manage ho sakte hain.
+
+
+
+
+
+
+
+
 
 

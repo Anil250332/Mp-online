@@ -20,8 +20,7 @@ import {
   Trash2,
   ShieldAlert,
   ShieldCheck,
-  Layers,
-  Plus
+  Layers
 } from 'lucide-react';
 
 interface OperatorItem {

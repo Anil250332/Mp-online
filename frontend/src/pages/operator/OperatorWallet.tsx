@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
-import { serviceTaskStore } from '../../services/serviceTaskStore';
+import { walletStore, type WalletTransaction } from '../../services/walletStore';
+import apiClient from '../../api/client';
 import {
   Wallet,
   ArrowUpRight,
@@ -13,15 +14,19 @@ import {
   Building,
   CreditCard,
   Hash,
-  User
+  User,
+  RefreshCw
 } from 'lucide-react';
 
 export default function OperatorWallet() {
   const { user } = useAuth();
-  const [walletData, setWalletData] = useState(serviceTaskStore.getOperatorWallet());
+  const [balance, setBalance] = useState<number>(0);
+  const [txns, setTxns] = useState<WalletTransaction[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Withdrawal Form State
   const [amount, setAmount] = useState('');
@@ -32,20 +37,27 @@ export default function OperatorWallet() {
   const [ifsc, setIfsc] = useState('');
   const [upiId, setUpiId] = useState('');
 
-  useEffect(() => {
-    const sync = () => {
-      setWalletData(serviceTaskStore.getOperatorWallet());
-    };
-
-    sync();
-    const unsubscribe = serviceTaskStore.subscribe(sync);
-    return unsubscribe;
+  const syncWallet = useCallback(async () => {
+    setIsLoading(true);
+    await walletStore.syncBackend();
+    setBalance(walletStore.getBalance());
+    setTxns(walletStore.getTransactions());
+    setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    syncWallet();
+    const unsubscribe = walletStore.subscribe(() => {
+      setBalance(walletStore.getBalance());
+      setTxns(walletStore.getTransactions());
+    });
+    return unsubscribe;
+  }, [syncWallet]);
 
   const handleOpenWithdrawalModal = () => {
     setErrorMsg('');
     setAmount('');
-    setAccountHolderName(user?.full_name || 'Ramesh Kumar Verma');
+    setAccountHolderName(user?.full_name || 'Operator');
     setAccountNo('');
     setConfirmAccountNo('');
     setIfsc('');
@@ -53,7 +65,7 @@ export default function OperatorWallet() {
     setIsModalOpen(true);
   };
 
-  const handleWithdrawalSubmit = (e: React.FormEvent) => {
+  const handleWithdrawalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -63,8 +75,8 @@ export default function OperatorWallet() {
       return;
     }
 
-    if (val > walletData.balance) {
-      setErrorMsg(`Insufficient wallet balance. Available: ₹ ${walletData.balance.toLocaleString()}`);
+    if (val > balance) {
+      setErrorMsg(`Insufficient wallet balance. Available: ₹ ${balance.toLocaleString()}`);
       return;
     }
 
@@ -83,20 +95,32 @@ export default function OperatorWallet() {
       return;
     }
 
-    const req = serviceTaskStore.submitWithdrawal({
-      operatorName: user?.full_name || 'Ramesh Kumar Verma',
-      accountHolderName: accountHolderName.trim(),
-      mobile: user?.mobile || '9876543210',
-      bankName,
-      accountNo: accountNo.trim(),
-      ifsc: ifsc.trim().toUpperCase(),
-      upiId: upiId.trim() || undefined,
-      amount: val
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await apiClient.post('/wallet/withdraw', {
+        amount: val,
+        accountHolderName: accountHolderName.trim(),
+        bankName,
+        accountNo: accountNo.trim(),
+        ifscCode: ifsc.trim().toUpperCase(),
+        upiId: upiId.trim() || undefined,
+        paymentMode: upiId.trim() ? 'upi' : 'bank_transfer'
+      });
 
-    setSuccessMsg(`Withdrawal Request "${req.reqNo}" for ₹ ${val.toLocaleString()} submitted successfully!`);
-    setIsModalOpen(false);
-    setTimeout(() => setSuccessMsg(''), 4500);
+      if (res.data.status === 'success') {
+        const reqNo = res.data.data?.reqNo || 'WDR-REQ';
+        setSuccessMsg(`Withdrawal Request "${reqNo}" for ₹ ${val.toLocaleString()} submitted successfully!`);
+        setIsModalOpen(false);
+        await syncWallet();
+        setTimeout(() => setSuccessMsg(''), 5000);
+      } else {
+        setErrorMsg(res.data.message || 'Failed to submit withdrawal request.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.response?.data?.message || 'Server error while submitting withdrawal.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -115,13 +139,24 @@ export default function OperatorWallet() {
             </p>
           </div>
 
-          <button
-            onClick={handleOpenWithdrawalModal}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
-          >
-            <PlusCircle className="h-4 w-4" />
-            <span>Submit Withdrawal Request</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={syncWallet}
+              disabled={isLoading}
+              className="px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <RefreshCw className={`h-4 w-4 text-emerald-600 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+
+            <button
+              onClick={handleOpenWithdrawalModal}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <PlusCircle className="h-4 w-4" />
+              <span>Submit Withdrawal Request</span>
+            </button>
+          </div>
         </div>
 
         {/* Success Alert */}
@@ -139,10 +174,10 @@ export default function OperatorWallet() {
               Available Operator Wallet Balance
             </span>
             <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight">
-              ₹ {walletData.balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              ₹ {balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-emerald-300">
-              Earnings credited instantly upon completing service tasks.
+              Earnings credited instantly upon task verification by Admin/Manager.
             </p>
           </div>
 
@@ -153,7 +188,6 @@ export default function OperatorWallet() {
             Request Payout
           </button>
 
-          {/* Decorative Circle Background */}
           <div className="absolute -right-8 -bottom-8 h-40 w-40 rounded-full bg-white/10 blur-xl pointer-events-none" />
         </div>
 
@@ -161,7 +195,7 @@ export default function OperatorWallet() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-4 border-b border-slate-200 flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-800">
-              Wallet Transaction History ({walletData.txns.length})
+              Wallet Transaction History ({txns.length})
             </h2>
           </div>
 
@@ -176,39 +210,39 @@ export default function OperatorWallet() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {walletData.txns.length === 0 ? (
+                {txns.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="py-12 text-center text-slate-400 text-xs">
                       No wallet transactions recorded yet.
                     </td>
                   </tr>
                 ) : (
-                  walletData.txns.map((t) => (
+                  txns.map((t) => (
                     <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4">
                         <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                          t.type === 'EARNING'
+                          t.type === 'CREDIT'
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             : 'bg-amber-50 text-amber-700 border-amber-200'
                         }`}>
-                          {t.type === 'EARNING' ? <ArrowDownLeft className="h-3 w-3 text-emerald-600" /> : <ArrowUpRight className="h-3 w-3 text-amber-600" />}
+                          {t.type === 'CREDIT' ? <ArrowDownLeft className="h-3 w-3 text-emerald-600" /> : <ArrowUpRight className="h-3 w-3 text-amber-600" />}
                           {t.type}
                         </span>
                       </td>
 
                       <td className="py-3.5 px-4 font-semibold text-slate-800">
-                        {t.description}
-                        {t.refNo && <span className="text-[11px] text-blue-700 font-mono block mt-0.5">{t.refNo}</span>}
+                        {t.remarks || t.category}
+                        {t.txnNo && <span className="text-[11px] text-blue-700 font-mono block mt-0.5">{t.txnNo}</span>}
                       </td>
 
                       <td className="py-3.5 px-4 text-slate-500 text-xs">
-                        {t.dateTime}
+                        {t.createdAt}
                       </td>
 
                       <td className={`py-3.5 px-4 text-right font-mono font-bold text-sm ${
-                        t.type === 'EARNING' ? 'text-emerald-700' : 'text-slate-900'
+                        t.type === 'CREDIT' ? 'text-emerald-700' : 'text-slate-900'
                       }`}>
-                        {t.type === 'EARNING' ? '+' : '-'} ₹ {t.amount.toLocaleString()}
+                        {t.type === 'CREDIT' ? '+' : '-'} ₹ {Number(t.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </td>
                     </tr>
                   ))
@@ -220,8 +254,8 @@ export default function OperatorWallet() {
 
         {/* Withdrawal Modal */}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95 my-auto">
               
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2 text-slate-800 font-bold text-base">
@@ -251,7 +285,7 @@ export default function OperatorWallet() {
                   </label>
                   <input
                     type="number"
-                    placeholder={`Available: ₹ ${walletData.balance}`}
+                    placeholder={`Available: ₹ ${balance.toFixed(2)}`}
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono font-bold"
@@ -371,9 +405,10 @@ export default function OperatorWallet() {
                   </button>
                   <button
                     type="submit"
-                    className="px-4.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors cursor-pointer"
+                    disabled={isSubmitting}
+                    className="px-4.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    Submit Withdrawal Request
+                    {isSubmitting ? 'Submitting...' : 'Submit Withdrawal Request'}
                   </button>
                 </div>
 

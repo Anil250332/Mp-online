@@ -157,6 +157,31 @@ export const verifyRegistration = async (req, res) => {
 
     const newUserId = userResult.insertId;
 
+    // If agent, create corresponding record in dedicated shops table
+    if (userData.role === 'agent') {
+      const year = new Date().getFullYear();
+      const shopCode = `SHOP-${year}-${1000 + newUserId}`;
+      await connection.query(
+        `INSERT INTO shops (
+          shop_id_code, user_id, owner_name, shop_name, mobile, email,
+          aadhaar_number, full_address, district, tehsil, ward_no, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        [
+          shopCode,
+          newUserId,
+          userData.full_name,
+          userData.shop_name || `${userData.full_name} Kiosk`,
+          userData.mobile,
+          userData.email || null,
+          userData.aadhaar_number || null,
+          userData.address || null,
+          userData.district || null,
+          userData.tehsil || null,
+          userData.ward_no || null
+        ]
+      );
+    }
+
     // Create wallet for the newly registered user
     await connection.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [newUserId]);
 

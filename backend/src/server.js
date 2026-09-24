@@ -13,6 +13,7 @@ import serviceRoutes from './routes/serviceRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
 import operatorAssignmentRoutes from './routes/operatorAssignmentRoutes.js';
+import applicationRoutes from './routes/applicationRoutes.js';
 
 dotenv.config();
 
@@ -58,6 +59,7 @@ app.use('/api/services', serviceRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/operator-assignments', operatorAssignmentRoutes);
+app.use('/api/applications', applicationRoutes);
 
 // Root route
 app.get('/', (req, res) => {

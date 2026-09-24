@@ -287,3 +287,255 @@ export const refundWallet = async (req, res) => {
   }
 };
 
+/**
+ * 5. Submit Payout / Withdrawal Request (Operator / Agent)
+ * POST /api/wallet/withdraw
+ */
+export const submitWithdrawal = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const userId = req.user?.id;
+    const { amount, paymentMode = 'bank_transfer', accountHolderName, bankName, accountNo, ifscCode, upiId } = req.body;
+    const withdrawAmt = parseFloat(amount);
+
+    if (!userId) {
+      return res.status(401).json({ status: 'error', message: 'Unauthorized session.' });
+    }
+
+    if (isNaN(withdrawAmt) || withdrawAmt <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Valid withdrawal amount is required.' });
+    }
+
+    if (!accountHolderName) {
+      return res.status(400).json({ status: 'error', message: 'Account Holder Name is required.' });
+    }
+
+    await connection.beginTransaction();
+
+    // Check user wallet balance
+    const [wallets] = await connection.query('SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE', [userId]);
+    if (wallets.length === 0 || parseFloat(wallets[0].balance) < withdrawAmt) {
+      await connection.rollback();
+      const current = wallets.length > 0 ? parseFloat(wallets[0].balance) : 0;
+      return res.status(400).json({
+        status: 'error',
+        message: `Insufficient balance! Current: ₹${current.toFixed(2)}, Requested: ₹${withdrawAmt.toFixed(2)}`
+      });
+    }
+
+    const walletId = wallets[0].id;
+    const openingBalance = parseFloat(wallets[0].balance);
+    const closingBalance = openingBalance - withdrawAmt;
+
+    // Deduct balance from wallet
+    await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closingBalance, walletId]);
+
+    // Insert withdrawal request
+    const [reqRes] = await connection.query(
+      `INSERT INTO withdrawal_requests (
+        req_no, user_id, amount, payment_mode, account_holder_name,
+        bank_name, account_no, ifsc_code, upi_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        'WDR-TEMP',
+        userId,
+        withdrawAmt,
+        paymentMode,
+        accountHolderName,
+        bankName || null,
+        accountNo || null,
+        ifscCode || null,
+        upiId || null
+      ]
+    );
+
+    const year = new Date().getFullYear();
+    const reqNo = `WDR-${year}-${1000 + reqRes.insertId}`;
+    await connection.query('UPDATE withdrawal_requests SET req_no = ? WHERE id = ?', [reqNo, reqRes.insertId]);
+
+    // Record debit transaction
+    const [txnRes] = await connection.query(
+      `INSERT INTO transactions (
+        txn_no, wallet_id, user_id, type, category, amount,
+        opening_balance, closing_balance, status, remarks
+      ) VALUES (?, ?, ?, 'debit', 'withdrawal', ?, ?, ?, 'success', ?)`,
+      [
+        'TXN-TEMP',
+        walletId,
+        userId,
+        withdrawAmt,
+        openingBalance,
+        closingBalance,
+        `Payout Withdrawal Request [Req ID: ${reqNo}]`
+      ]
+    );
+
+    const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
+    await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
+
+    await connection.commit();
+
+    return res.status(201).json({
+      status: 'success',
+      message: `Withdrawal request for ₹${withdrawAmt.toFixed(2)} submitted successfully!`,
+      data: { reqNo, amount: withdrawAmt, closingBalance }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Submit Withdrawal Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+/**
+ * 6. Get Withdrawal Requests List
+ * GET /api/wallet/withdrawals
+ */
+export const getWithdrawals = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    let query = `
+      SELECT w.*, u.full_name as userName, u.mobile as userMobile, u.role as userRole
+      FROM withdrawal_requests w
+      JOIN users u ON w.user_id = u.id
+    `;
+
+    const params = [];
+    if (userRole !== 'super_admin' && userRole !== 'sub_admin' && userRole !== 'manager' && userId) {
+      query += ' WHERE w.user_id = ?';
+      params.push(userId);
+    }
+
+    query += ' ORDER BY w.created_at DESC';
+
+    const [rows] = await pool.query(query, params);
+
+    return res.status(200).json({
+      status: 'success',
+      data: rows.map(r => ({
+        id: r.id.toString(),
+        reqNo: r.req_no,
+        userId: r.user_id.toString(),
+        userName: r.userName,
+        userMobile: r.userMobile,
+        userRole: r.userRole,
+        amount: parseFloat(r.amount),
+        paymentMode: r.payment_mode,
+        accountHolderName: r.account_holder_name,
+        bankName: r.bank_name || 'N/A',
+        accountNo: r.account_no || 'N/A',
+        ifscCode: r.ifsc_code || 'N/A',
+        upiId: r.upi_id || 'N/A',
+        status: r.status.toUpperCase(),
+        rejectionReason: r.rejection_reason || null,
+        utrNo: r.utr_no || null,
+        createdAt: new Date(r.created_at).toLocaleString('en-IN', {
+          day: '2-digit', month: 'short', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', hour12: true
+        })
+      }))
+    });
+  } catch (error) {
+    console.error('Get Withdrawals Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * 7. Process Withdrawal Request (Approve / Reject) (Admin / Manager)
+ * PATCH /api/wallet/withdrawals/:id/process
+ */
+export const processWithdrawal = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const { action, utrNo, rejectionReason } = req.body; // action: 'approve' | 'reject'
+    const processedBy = req.user?.id || 1;
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ status: 'error', message: 'Action must be "approve" or "reject".' });
+    }
+
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query('SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE', [id]);
+    if (rows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'Withdrawal request not found.' });
+    }
+
+    const reqItem = rows[0];
+    if (reqItem.status !== 'pending') {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: `Withdrawal request is already ${reqItem.status}.` });
+    }
+
+    if (action === 'approve') {
+      await connection.query(
+        `UPDATE withdrawal_requests 
+         SET status = 'processed', utr_no = ?, processed_by = ?, processed_at = NOW() 
+         WHERE id = ?`,
+        [utrNo || 'BANK_SETTLED', processedBy, id]
+      );
+    } else {
+      // Reject withdrawal -> Refund money back to user wallet
+      const refundAmt = parseFloat(reqItem.amount);
+      const targetUserId = reqItem.user_id;
+
+      const [wallets] = await connection.query('SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE', [targetUserId]);
+      if (wallets.length > 0) {
+        const walletId = wallets[0].id;
+        const opening = parseFloat(wallets[0].balance);
+        const closing = opening + refundAmt;
+
+        await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closing, walletId]);
+
+        const year = new Date().getFullYear();
+        const [txnRes] = await connection.query(
+          `INSERT INTO transactions (
+            txn_no, wallet_id, user_id, type, category, amount,
+            opening_balance, closing_balance, status, remarks
+          ) VALUES (?, ?, ?, 'credit', 'refund', ?, ?, ?, 'success', ?)`,
+          [
+            'TXN-TEMP',
+            walletId,
+            targetUserId,
+            refundAmt,
+            opening,
+            closing,
+            `Refund: Rejected Withdrawal Request [${reqItem.req_no}]: ${rejectionReason || 'Rejected by Admin'}`
+          ]
+        );
+
+        const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
+        await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
+      }
+
+      await connection.query(
+        `UPDATE withdrawal_requests 
+         SET status = 'rejected', rejection_reason = ?, processed_by = ?, processed_at = NOW() 
+         WHERE id = ?`,
+        [rejectionReason || 'Rejected by Admin', processedBy, id]
+      );
+    }
+
+    await connection.commit();
+
+    return res.status(200).json({
+      status: 'success',
+      message: `Withdrawal request ${action === 'approve' ? 'approved & marked processed' : 'rejected and amount refunded to wallet'}.`
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Process Withdrawal Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+

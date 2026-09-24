@@ -35,8 +35,7 @@ import {
   Building2,
   MapPin,
   Loader2,
-  Link2,
-  Trash2 as Trash2Icon
+  Link2
 } from 'lucide-react';
 
 export default function AdminServices() {
@@ -2239,6 +2238,38 @@ export default function AdminServices() {
                     <span>Assign Operator to Service</span>
                   </button>
                 </form>
+
+                {/* Existing Assignments List */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Active Service Assignments ({allAssignments.length})
+                  </h4>
+                  {allAssignments.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">No custom operator assignments created yet.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                      {allAssignments.map((as: any) => (
+                        <div key={as.id} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                          <div>
+                            <span className="font-bold text-slate-800">{as.service_name}</span>
+                            <span className="text-slate-400 mx-1.5">→</span>
+                            <span className="text-indigo-600 font-semibold">{as.operator_name}</span>
+                            {as.ward_no && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold">Ward {as.ward_no}</span>}
+                            {as.area_label && <span className="ml-2 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">{as.area_label}</span>}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAssignment(as.id)}
+                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors"
+                            title="Remove assignment"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
               </div>
 

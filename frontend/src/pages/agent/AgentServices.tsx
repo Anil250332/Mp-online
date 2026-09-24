@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { useAuth } from '../../context/AuthContext';
 import {
   serviceStore,
   type ServiceItem,
@@ -10,7 +9,6 @@ import {
   DROPDOWN_PRESETS
 } from '../../services/serviceStore';
 import { walletStore } from '../../services/walletStore';
-import { serviceTaskStore } from '../../services/serviceTaskStore';
 import apiClient from '../../api/client';
 import {
   Layers,
@@ -34,7 +32,6 @@ import {
 } from 'lucide-react';
 
 export default function AgentServices() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -57,6 +54,7 @@ export default function AgentServices() {
   // Dynamic Form Values
   const [formInputs, setFormInputs] = useState<Record<string, any>>({});
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, string>>({});
+  const [rawFiles, setRawFiles] = useState<Record<string, File>>({});
 
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -79,6 +77,7 @@ export default function AgentServices() {
     };
     update();
     serviceStore.syncBackend();
+    walletStore.syncBackend();
     const unsub1 = serviceStore.subscribe(update);
     const unsub2 = walletStore.subscribe(update);
     return () => {
@@ -108,6 +107,7 @@ export default function AgentServices() {
     setErrorMsg('');
     setFormInputs({});
     setUploadedFiles({});
+    setRawFiles({});
     setSelectedAreaLabel('');
     setSelectedWardNo('');
 
@@ -141,17 +141,17 @@ export default function AgentServices() {
     setFormInputs(prev => ({ ...prev, [fieldId]: value }));
   };
 
-  // Handle File Input Change
+  // Handle Real File Input Change
   const handleFileChange = (fieldId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const fakeUrl = URL.createObjectURL(file);
       setUploadedFiles(prev => ({ ...prev, [fieldId]: file.name }));
-      setFormInputs(prev => ({ ...prev, [fieldId]: fakeUrl }));
+      setRawFiles(prev => ({ ...prev, [fieldId]: file }));
+      setFormInputs(prev => ({ ...prev, [fieldId]: file.name }));
     }
   };
 
-  // Submit Application
+  // Submit Application to Real Backend API
   const handleApplyServiceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedService) return;
@@ -170,10 +170,17 @@ export default function AgentServices() {
     // Validate Required Dynamic Form Fields
     for (const field of activeFormFields) {
       if (field.required && field.docUploader !== 'operator') {
-        const val = formInputs[field.id];
-        if (!val || (typeof val === 'string' && !val.trim())) {
-          setErrorMsg(`Please fill required field: "${field.label}"`);
-          return;
+        if (field.type === 'file') {
+          if (!rawFiles[field.id]) {
+            setErrorMsg(`Please upload required document: "${field.label}"`);
+            return;
+          }
+        } else {
+          const val = formInputs[field.id];
+          if (!val || (typeof val === 'string' && !val.trim())) {
+            setErrorMsg(`Please fill required field: "${field.label}"`);
+            return;
+          }
         }
       }
     }
@@ -200,11 +207,7 @@ export default function AgentServices() {
           : `${selectedService.name} (${selectedSubService.name})`)
       : selectedService.name;
 
-    const adminCommissionPercent = selectedSubService
-      ? (selectedSubService.adminCommissionPercent ?? (selectedSubService as any).admin_commission_percent ?? (selectedSubService as any).admin_commission ?? 0)
-      : (selectedService?.adminCommissionPercent ?? (selectedService as any)?.admin_commission_percent ?? (selectedService as any)?.admin_commission ?? 0);
-
-    // Compile submitted form data labels & values for operator view
+    // Compile submitted form data labels & values
     const submittedFormData: Record<string, string> = {};
     activeFormFields.forEach(field => {
       if (field.docUploader === 'operator') {
@@ -216,54 +219,47 @@ export default function AgentServices() {
       }
     });
 
-    // Add selected location details to form data for reference
     if (selectedAreaLabel) submittedFormData['Office / Area Location'] = selectedAreaLabel;
     if (selectedWardNo) submittedFormData['Gwalior Ward Number'] = `Ward #${selectedWardNo}`;
 
-    // Find matched operator dynamically from backend
-    let matchedOperatorId: string | undefined;
-    let matchedOperatorName: string | undefined;
-
-    try {
-      let findUrl = `/operator-assignments/find-operator?`;
-      if (selectedSubService) findUrl += `sub_service_id=${selectedSubService.id}&`;
-      else findUrl += `service_id=${selectedService.id}&`;
-      if (selectedAreaLabel) findUrl += `area_label=${encodeURIComponent(selectedAreaLabel)}&`;
-      if (selectedWardNo) findUrl += `ward_no=${encodeURIComponent(selectedWardNo)}`;
-
-      const findRes = await apiClient.get(findUrl);
-      if (findRes.data.status === 'success' && findRes.data.data?.found) {
-        matchedOperatorId = String(findRes.data.data.operatorId);
-        matchedOperatorName = findRes.data.data.operatorName;
-      }
-    } catch (e) {
-      console.log('Operator matching fallback to system default');
+    // Construct FormData for multipart API call
+    const formDataPayload = new FormData();
+    if (selectedSubService?.id) {
+      formDataPayload.append('subServiceId', selectedSubService.id.toString());
+    } else {
+      formDataPayload.append('serviceId', selectedService.id.toString());
     }
 
-    const newTask = serviceTaskStore.createTask({
-      shopName: user?.shop_name || 'Sharma MP Online & CSC Center',
-      shopCode: 'SHOP-2026-1003',
-      ownerName: user?.full_name || 'Rajesh Sharma',
-      serviceName: serviceTitle,
-      serviceCode: selectedSubService?.code || selectedService.code,
-      category: 'Citizen Services',
-      amount: activeFee,
-      adminCommissionPercent,
-      formData: Object.keys(submittedFormData).length > 0 ? submittedFormData : undefined,
-      operatorId: matchedOperatorId,
-      operatorName: matchedOperatorName
+    if (selectedAreaLabel) formDataPayload.append('areaLabel', selectedAreaLabel);
+    if (selectedWardNo) formDataPayload.append('wardNo', selectedWardNo);
+    formDataPayload.append('formData', JSON.stringify(submittedFormData));
+
+    // Append actual file objects
+    activeFormFields.forEach(field => {
+      if (field.type === 'file' && rawFiles[field.id]) {
+        formDataPayload.append(`doc_${field.label}`, rawFiles[field.id]);
+      }
     });
 
-    const res = await walletStore.deductWallet(activeFee, serviceTitle, newTask.taskNo);
-    setIsProcessing(false);
+    try {
+      const response = await apiClient.post('/applications/apply', formDataPayload, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
 
-    if (res.success) {
-      setSuccessMsg(`Service application "${newTask.taskNo}" for "${serviceTitle}" submitted successfully! Fee ₹${activeFee.toFixed(2)} deducted.`);
-      setSelectedService(null);
-      setDrillDownService(null);
-      setTimeout(() => setSuccessMsg(''), 6000);
-    } else {
-      setErrorMsg(res.message);
+      if (response.data.status === 'success') {
+        const appNo = response.data.data?.applicationNo || 'APP-SUCCESS';
+        await walletStore.syncBackend();
+        setSuccessMsg(`Service application "${appNo}" for "${serviceTitle}" submitted successfully! Fee ₹${activeFee.toFixed(2)} deducted.`);
+        setSelectedService(null);
+        setDrillDownService(null);
+        setTimeout(() => setSuccessMsg(''), 6000);
+      } else {
+        setErrorMsg(response.data.message || 'Failed to apply.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.response?.data?.message || 'Server error while submitting application.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 

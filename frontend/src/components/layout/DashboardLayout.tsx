@@ -112,8 +112,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         { name: 'Dashboard', icon: Home, path: '/operator/dashboard', color: 'text-blue-600' },
         { name: 'Service Requests', icon: Layers, path: '/operator/service-requests', color: 'text-indigo-600' },
         { name: 'Wallet Management', icon: Wallet, path: '/operator/wallet', color: 'text-emerald-600' },
-        { name: 'Complaint', icon: Headphones, path: '/operator/complaints', color: 'text-red-600' },
-        { name: 'My Profile', icon: User, path: '/distributor/profile', color: 'text-purple-600' }
+        { name: 'Complaint', icon: Headphones, path: '/operator/complaint', color: 'text-red-600' },
+        { name: 'My Profile', icon: User, path: '/operator/profile', color: 'text-purple-600' }
       ];
     }
 
@@ -126,7 +126,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         { name: 'Task Verification', icon: UserCheck, path: '/manager/task-verification', color: 'text-indigo-600' },
         { name: 'Operator Withdrawal Request', icon: Wallet, path: '/manager/withdrawal-requests', color: 'text-emerald-600' },
         { name: 'Complaint', icon: Headphones, path: '/manager/complaints', color: 'text-red-600' },
-        { name: 'My Profile', icon: User, path: '/distributor/profile', color: 'text-purple-600' }
+        { name: 'My Profile', icon: User, path: '/manager/profile', color: 'text-purple-600' }
       ];
     }
 
@@ -150,6 +150,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         { name: 'Operator Withdrawal Request', icon: Wallet, path: `${basePath}/withdrawal-requests`, color: 'text-teal-600' },
         { name: 'Wallet Management', icon: Wallet, path: `${basePath}/wallet`, color: 'text-emerald-600' },
         { name: 'Complaint', icon: Headphones, path: `${basePath}/complaints`, color: 'text-red-600' },
+        { name: 'My Profile', icon: User, path: `${basePath}/profile`, color: 'text-purple-600' },
         { name: 'Settings', icon: Settings, path: `${basePath}/settings`, color: 'text-slate-600' }
       ];
     }
@@ -163,6 +164,14 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
       { name: 'My Profile', icon: User, path: '/agent/profile', color: 'text-purple-600' },
       { name: 'Terms & Policies', icon: Shield, path: '/agent/terms', color: 'text-blue-500' }
     ];
+  };
+
+  const getProfilePath = () => {
+    if (user?.role === 'super_admin' || user?.role === 'sub_admin') return '/admin/profile';
+    if (user?.role === 'manager') return '/manager/profile';
+    if (user?.role === 'operator') return '/operator/profile';
+    if (user?.role === 'distributor') return '/distributor/profile';
+    return '/agent/profile';
   };
 
   const menuItems = getMenuItems();
@@ -222,8 +231,12 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
             </div>
           )}
 
-          {/* User Profile Avatar */}
-          <div className="flex items-center gap-2 pl-1 sm:pl-2">
+          {/* User Profile Avatar Link */}
+          <Link
+            to={getProfilePath()}
+            className="flex items-center gap-2 pl-1 sm:pl-2 hover:opacity-85 transition-opacity cursor-pointer"
+            title="View My Profile"
+          >
             <div className="h-8 w-8 rounded-full bg-white/20 flex items-center justify-center text-white text-xs font-bold border border-white/40 shadow-xs">
               <User className="h-4 w-4 text-white" />
             </div>
@@ -231,7 +244,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
               <p className="text-xs font-bold text-white truncate max-w-[120px]">{user?.full_name || 'Retailer'}</p>
               <p className="text-[10px] text-blue-200 font-medium mt-0.5">{getRoleDisplayName()}</p>
             </div>
-          </div>
+          </Link>
         </div>
       </header>
 

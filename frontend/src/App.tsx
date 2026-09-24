@@ -15,6 +15,7 @@ import AgentServiceRequests from './pages/agent/AgentServiceRequests';
 import AgentWallet from './pages/agent/AgentWallet';
 import AgentProfile from './pages/agent/AgentProfile';
 import AgentTerms from './pages/agent/AgentTerms';
+import UserProfile from './pages/profile/UserProfile';
 
 // Operator Pages
 import OperatorDashboard from './pages/operator/OperatorDashboard';
@@ -97,6 +98,14 @@ export const App: React.FC = () => {
             }
           />
           <Route
+            path="/agent/complaints"
+            element={
+              <ProtectedRoute allowedRoles={['agent']}>
+                <DistributorComplaint />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/agent/profile"
             element={
               <ProtectedRoute allowedRoles={['agent']}>
@@ -143,6 +152,22 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['operator']}>
                 <DistributorComplaint />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/operator/complaints"
+            element={
+              <ProtectedRoute allowedRoles={['operator']}>
+                <DistributorComplaint />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/operator/profile"
+            element={
+              <ProtectedRoute allowedRoles={['operator']}>
+                <UserProfile />
               </ProtectedRoute>
             }
           />
@@ -196,6 +221,14 @@ export const App: React.FC = () => {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/distributor/complaints"
+            element={
+              <ProtectedRoute allowedRoles={['distributor']}>
+                <DistributorComplaint />
+              </ProtectedRoute>
+            }
+          />
 
           {/* 4. Manager Panel Routes */}
           <Route
@@ -215,10 +248,26 @@ export const App: React.FC = () => {
             }
           />
           <Route
+            path="/manager/complaint"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <AdminComplaints />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/manager/task-verification"
             element={
               <ProtectedRoute allowedRoles={['manager', 'super_admin', 'sub_admin']}>
                 <AdminTaskVerification />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager/profile"
+            element={
+              <ProtectedRoute allowedRoles={['manager']}>
+                <UserProfile />
               </ProtectedRoute>
             }
           />
@@ -273,6 +322,14 @@ export const App: React.FC = () => {
             }
           />
           <Route
+            path="/admin/complaint"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin']}>
+                <AdminComplaints />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/admin/users"
             element={
               <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
@@ -309,6 +366,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
                 <AdminSettings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/profile"
+            element={
+              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin']}>
+                <UserProfile />
               </ProtectedRoute>
             }
           />
@@ -385,6 +450,16 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['sub_admin']}>
                 <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Universal Profile Route */}
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute allowedRoles={['agent', 'operator', 'distributor', 'manager', 'super_admin', 'sub_admin']}>
+                <UserProfile />
               </ProtectedRoute>
             }
           />
