@@ -6,14 +6,21 @@ import pool from '../config/db.js';
  */
 const getTransporter = () => {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.SMTP_PORT || '587', 10);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
 
+  if (host.includes('gmail.com') || (user && user.includes('gmail.com'))) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: user && pass ? { user, pass } : undefined
+    });
+  }
+
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
   return nodemailer.createTransport({
     host,
     port,
-    secure: port === 465, // true for 465, false for other ports
+    secure: port === 465,
     auth: user && pass ? { user, pass } : undefined,
     tls: {
       rejectUnauthorized: false
@@ -30,7 +37,11 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     return false;
   }
 
-  const from = process.env.EMAIL_FROM || '"V2Online MP Portal" <no-reply@v2onlineportal.com>';
+  const user = process.env.SMTP_USER;
+  const defaultFrom = user ? `"V2Online MP Portal" <${user}>` : '"V2Online MP Portal" <no-reply@v2onlineportal.com>';
+  const from = (process.env.EMAIL_FROM && !process.env.EMAIL_FROM.includes('no-reply@v2onlineportal.com'))
+    ? process.env.EMAIL_FROM
+    : defaultFrom;
 
   // Check if SMTP credentials are configured
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
