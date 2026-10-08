@@ -179,14 +179,16 @@ class ApplicationRepository {
         u_op.mobile as operatorMobile,
         ss.name as subServiceName,
         ss.code as subServiceCode,
-        s.name as serviceName,
-        s.code as serviceCode,
+        ss.form_schema as subServiceFormSchema,
+        COALESCE(s.name, ss.name, 'Service Application') as serviceName,
+        COALESCE(s.code, ss.code, 'SRV') as serviceCode,
+        s.form_schema as serviceFormSchema,
         s.icon_url as iconUrl
       FROM applications a
       JOIN users u_agent ON a.agent_id = u_agent.id
       LEFT JOIN users u_op ON a.operator_id = u_op.id
-      JOIN sub_services ss ON a.sub_service_id = ss.id
-      JOIN services s ON ss.service_id = s.id
+      LEFT JOIN sub_services ss ON a.sub_service_id = ss.id
+      LEFT JOIN services s ON ss.service_id = s.id
       WHERE 1=1
     `;
 
@@ -259,8 +261,10 @@ class ApplicationRepository {
         u_op.mobile as operatorMobile,
         ss.name as subServiceName,
         ss.code as subServiceCode,
+        ss.form_schema as subServiceFormSchema,
         s.name as serviceName,
         s.code as serviceCode,
+        s.form_schema as serviceFormSchema,
         s.icon_url as iconUrl
       FROM applications a
       JOIN users u_agent ON a.agent_id = u_agent.id
@@ -302,11 +306,12 @@ class ApplicationRepository {
       await connection.query(
         `UPDATE applications 
          SET status = 'completed',
+             operator_id = COALESCE(operator_id, ?),
              govt_ack_no = ?,
              completion_output_data = ?,
              completed_at = NOW()
          WHERE id = ? AND (operator_id = ? OR operator_id IS NULL)`,
-        [govtAckNo || null, JSON.stringify(outputData), appId, operatorId]
+        [operatorId || null, govtAckNo || null, JSON.stringify(outputData), appId, operatorId]
       );
 
       // Insert deliverable document records
@@ -356,59 +361,61 @@ class ApplicationRepository {
       if (apps.length === 0) throw new Error('Application not found.');
       const app = apps[0];
 
-      if (app.status === 'completed' || app.status === 'processing' || app.status === 'assigned') {
-        const opId = app.operator_id;
-        const opPayout = parseFloat(app.operator_payout || 0);
+      if (app.status === 'verified') {
+        throw new Error('This application has already been verified and operator payout was credited.');
+      }
 
-        // 2. Update application status
-        await connection.query(
-          "UPDATE applications SET status = 'completed' WHERE id = ?",
-          [appId]
+      const opId = app.operator_id;
+      const opPayout = parseFloat(app.operator_payout || 0);
+
+      // 2. Update application status to 'verified'
+      await connection.query(
+        "UPDATE applications SET status = 'verified' WHERE id = ?",
+        [appId]
+      );
+
+      // 3. Credit Operator Wallet if operator exists and payout > 0
+      if (opId && opPayout > 0) {
+        const [opWallets] = await connection.query(
+          'SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE',
+          [opId]
         );
 
-        // 3. Credit Operator Wallet if operator exists and payout > 0
-        if (opId && opPayout > 0) {
-          const [opWallets] = await connection.query(
-            'SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE',
-            [opId]
-          );
+        let walletId;
+        let opOpening = 0.00;
 
-          let walletId;
-          let opOpening = 0.00;
-
-          if (opWallets.length === 0) {
-            const [wIns] = await connection.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [opId]);
-            walletId = wIns.insertId;
-          } else {
-            walletId = opWallets[0].id;
-            opOpening = parseFloat(opWallets[0].balance);
-          }
-
-          const opClosing = opOpening + opPayout;
-          await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [opClosing, walletId]);
-
-          // Record earning transaction
-          const year = new Date().getFullYear();
-          const [txnRes] = await connection.query(
-            `INSERT INTO transactions (
-              txn_no, wallet_id, user_id, application_id, type, category, amount,
-              opening_balance, closing_balance, status, remarks
-            ) VALUES (?, ?, ?, ?, 'credit', 'operator_earning', ?, ?, ?, 'success', ?)`,
-            [
-              'TXN-TEMP',
-              walletId,
-              opId,
-              appId,
-              opPayout,
-              opOpening,
-              opClosing,
-              `Operator Share credited for Application [App ID: ${app.application_no}]`
-            ]
-          );
-
-          const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
-          await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
+        if (opWallets.length === 0) {
+          const [wIns] = await connection.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [opId]);
+          walletId = wIns.insertId;
+        } else {
+          walletId = opWallets[0].id;
+          opOpening = parseFloat(opWallets[0].balance);
         }
+
+        const opClosing = opOpening + opPayout;
+        await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [opClosing, walletId]);
+
+        // Record earning transaction
+        const year = new Date().getFullYear();
+        const [txnRes] = await connection.query(
+          `INSERT INTO transactions (
+            txn_no, wallet_id, user_id, application_id, type, category, amount,
+            opening_balance, closing_balance, status, remarks
+          ) VALUES (?, ?, ?, ?, 'credit', 'operator_earning', ?, ?, ?, 'success', ?)`,
+          [
+            'TXN-TEMP',
+            walletId,
+            opId,
+            appId,
+            opPayout,
+            opOpening,
+            opClosing,
+            `Operator Share credited for Application [App ID: ${app.application_no}]`
+          ]
+        );
+
+        const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
+        await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
       }
 
       await connection.commit();

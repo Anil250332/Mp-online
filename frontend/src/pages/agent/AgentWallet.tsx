@@ -179,9 +179,9 @@ export default function AgentWallet() {
                   </tr>
                 ) : (
                     filteredTxns.map((txn) => {
-                      const displayAppId = txn.appId || (txn.remarks ? (txn.remarks.match(/\[(?:App|Task)\s*ID:\s*([^\]]+)\]/i)?.[1] || txn.remarks.match(/(TSK-\d{4}-\d{4})/i)?.[1]) : null);
-                      const finalAppId = displayAppId || ((txn.category === 'service_fee' || txn.category === 'refund') ? `TSK-2026-${txn.txnNo.split('-').pop()}` : null);
-                      const cleanRemarks = txn.remarks ? txn.remarks.replace(/\s*\[(?:App|Task)\s*ID:\s*[^\]]+\]/gi, '').trim() : '';
+                      const displayAppId = txn.appId || (txn.remarks ? (txn.remarks.match(/\[(?:App|Application|Task)\s*ID:\s*([^\]]+)\]/i)?.[1] || txn.remarks.match(/(APP-\d{4}-\d{4})/i)?.[1]) : null);
+                      const finalAppId = displayAppId || ((txn.category === 'service_fee' || txn.category === 'refund') ? `APP-2026-${txn.txnNo.split('-').pop()}` : null);
+                      const cleanRemarks = txn.remarks ? txn.remarks.replace(/\s*\[(?:App|Application|Task)\s*ID:\s*[^\]]+\]/gi, '').trim() : '';
 
                       return (
                         <tr key={txn.id} className="hover:bg-slate-50/80 transition-colors">

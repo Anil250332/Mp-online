@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { sendComplaintTicketAlertToAdminsAndManagers, sendComplaintResolvedEmail } from '../utils/mailer.js';
 
 /**
  * 1. Get Complaints List
@@ -98,6 +99,14 @@ export const createComplaint = async (req, res) => {
     // Update with formatted TKT-2026-XXXX ticket number
     await pool.query('UPDATE complaints SET ticket_no = ? WHERE id = ?', [ticketNo, result.insertId]);
 
+    // Send Admin & Manager notification (non-blocking)
+    sendComplaintTicketAlertToAdminsAndManagers({
+      ticketId: ticketNo,
+      shopName: req.user?.shop_name || req.user?.full_name || 'Portal User',
+      subject,
+      priority: category || 'Normal'
+    }).catch(err => console.error('Complaint alert email error:', err.message));
+
     return res.status(201).json({
       status: 'success',
       message: 'Complaint ticket created successfully!',
@@ -136,6 +145,26 @@ export const updateComplaintStatus = async (req, res) => {
        WHERE id = ?`,
       [status.toLowerCase(), resolutionNote || null, resolvedBy, id]
     );
+
+    // Send Resolution Email if status resolved/closed (non-blocking)
+    if (['resolved', 'closed'].includes(status.toLowerCase())) {
+      pool.query(
+        `SELECT c.ticket_no, u.full_name, u.shop_name, u.email 
+         FROM complaints c 
+         JOIN users u ON c.raised_by = u.id 
+         WHERE c.id = ?`,
+        [id]
+      ).then(([cRows]) => {
+        if (cRows.length > 0 && cRows[0].email) {
+          sendComplaintResolvedEmail({
+            toEmail: cRows[0].email,
+            shopName: cRows[0].shop_name || cRows[0].full_name,
+            ticketId: cRows[0].ticket_no,
+            resolutionNote
+          }).catch(err => console.error('Complaint resolution email error:', err.message));
+        }
+      }).catch(err => console.error('Fetch complainant for resolution email error:', err.message));
+    }
 
     return res.status(200).json({
       status: 'success',

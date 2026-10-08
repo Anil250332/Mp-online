@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { sendWalletCreditEmail, sendWithdrawalRequestAlertToAdmin, sendWithdrawalStatusEmail } from '../utils/mailer.js';
 
 /**
  * 1. Get Wallet Balance and Transaction Ledger
@@ -118,6 +119,17 @@ export const rechargeWallet = async (req, res) => {
     await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
 
     await connection.commit();
+
+    // Send Wallet Credit Email to Shop Agent ONLY (non-blocking)
+    if (req.user?.email) {
+      sendWalletCreditEmail({
+        toEmail: req.user.email,
+        shopName: req.user.shop_name || req.user.full_name,
+        amount: rechargeAmt,
+        newBalance: closingBalance,
+        txnId: txnNo
+      }).catch(err => console.error('Recharge credit email error:', err.message));
+    }
 
     return res.status(200).json({
       status: 'success',
@@ -375,6 +387,14 @@ export const submitWithdrawal = async (req, res) => {
 
     await connection.commit();
 
+    // Notify Admin about Operator withdrawal request (non-blocking)
+    sendWithdrawalRequestAlertToAdmin({
+      operatorName: req.user?.full_name || accountHolderName,
+      amount: withdrawAmt,
+      paymentMethod: paymentMode,
+      upiId: upiId || accountNo || 'N/A'
+    }).catch(err => console.error('Withdrawal alert to admin email error:', err.message));
+
     return res.status(201).json({
       status: 'success',
       message: `Withdrawal request for ₹${withdrawAmt.toFixed(2)} submitted successfully!`,
@@ -524,6 +544,21 @@ export const processWithdrawal = async (req, res) => {
     }
 
     await connection.commit();
+
+    // Send Withdrawal Status Email to Operator/User (non-blocking)
+    pool.query('SELECT full_name, email FROM users WHERE id = ?', [reqItem.user_id])
+      .then(([uRows]) => {
+        if (uRows.length > 0 && uRows[0].email) {
+          sendWithdrawalStatusEmail({
+            toEmail: uRows[0].email,
+            operatorName: uRows[0].full_name,
+            amount: reqItem.amount,
+            status: action === 'approve' ? 'approved' : 'rejected',
+            note: action === 'approve' ? `UTR / Ref: ${utrNo || 'BANK_SETTLED'}` : rejectionReason
+          }).catch(err => console.error('Withdrawal status email error:', err.message));
+        }
+      })
+      .catch(err => console.error('Fetch user for withdrawal email error:', err.message));
 
     return res.status(200).json({
       status: 'success',

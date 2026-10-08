@@ -51,7 +51,7 @@ interface ApplicationItem {
 export default function AdminTaskVerification() {
   const [tasks, setTasks] = useState<ApplicationItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'ALL' | 'COMPLETED' | 'VERIFIED'>('COMPLETED');
+  const [activeFilter, setActiveFilter] = useState<'ALL' | 'COMPLETED' | 'VERIFIED' | 'REJECTED'>('COMPLETED');
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [viewModalTask, setViewModalTask] = useState<ApplicationItem | null>(null);
@@ -103,6 +103,82 @@ export default function AdminTaskVerification() {
     }
   };
 
+  const getOperatorNote = (data?: string | { note?: string; files?: ApplicationDoc[] }): string => {
+    if (!data) return '';
+    if (typeof data === 'object') return data.note || '';
+    try {
+      const parsed = JSON.parse(data);
+      return parsed.note || '';
+    } catch {
+      return String(data);
+    }
+  };
+
+  const getParsedCompletionOutput = (data?: string | object) => {
+    if (!data) return null;
+    if (typeof data === 'object') return data as { note?: string; files?: any[] };
+    try {
+      return JSON.parse(data) as { note?: string; files?: any[] };
+    } catch {
+      return null;
+    }
+  };
+
+  const getDocumentCategories = (documents?: ApplicationDoc[], completionOutputData?: string | object) => {
+    if (!Array.isArray(documents) || documents.length === 0) {
+      return { clientDocs: [], operatorDocs: [] };
+    }
+
+    const compOutput = getParsedCompletionOutput(completionOutputData);
+    const outputFiles = Array.isArray(compOutput?.files) ? compOutput.files : [];
+
+    const operatorDocs: ApplicationDoc[] = [];
+    const clientDocs: ApplicationDoc[] = [];
+
+    documents.forEach((doc) => {
+      const labelLower = (doc.label || '').toLowerCase();
+      const matchesOutputFile = outputFiles.some((of: any) => {
+        const matchPath = of.filePath && doc.filePath && of.filePath === doc.filePath;
+        const matchLabel = of.label && doc.label && of.label.toLowerCase() === doc.label.toLowerCase();
+        return matchPath || matchLabel;
+      });
+
+      const isOperatorLabel =
+        labelLower === 'response' ||
+        labelLower.includes('deliverable') ||
+        labelLower.includes('output certificate') ||
+        labelLower.startsWith('deliverable_');
+
+      if (matchesOutputFile || isOperatorLabel) {
+        operatorDocs.push(doc);
+      } else {
+        clientDocs.push(doc);
+      }
+    });
+
+    if (operatorDocs.length === 0 && outputFiles.length > 0) {
+      outputFiles.forEach((f: any) => {
+        operatorDocs.push({
+          label: f.label || 'Operator Output File',
+          fileName: f.fileName,
+          filePath: f.filePath,
+          mimeType: f.mimeType || 'application/pdf'
+        });
+      });
+    }
+
+    return { clientDocs, operatorDocs };
+  };
+
+  const isApplicantFormField = (label: string, value: any): boolean => {
+    const strVal = String(value || '');
+    const labelLower = label.toLowerCase();
+    if (strVal.includes('Uploaded Document')) return false;
+    if (strVal.includes('Pending Operator File Upload')) return false;
+    if (labelLower.startsWith('[operator') || labelLower.includes('operator deliverable')) return false;
+    return true;
+  };
+
   const handleVerify = async (task: ApplicationItem) => {
     try {
       const res = await apiClient.patch(`/applications/${task.id}/verify`);
@@ -141,14 +217,15 @@ export default function AdminTaskVerification() {
 
   const filtered = tasks.filter(t => {
     const s = (t.status || '').toLowerCase();
-    if (s === 'rejected') return false;
 
     const matchesFilter =
       activeFilter === 'ALL'
         ? true
-        : activeFilter === 'VERIFIED'
-        ? s === 'verified'
-        : s === 'completed';
+        : activeFilter === 'COMPLETED'
+          ? s === 'completed'
+          : activeFilter === 'VERIFIED'
+            ? s === 'verified'
+            : s === 'rejected';
 
     const term = searchTerm.trim().toLowerCase();
     if (!term) return matchesFilter;
@@ -158,6 +235,7 @@ export default function AdminTaskVerification() {
       (t.applicationNo?.toLowerCase().includes(term) ||
         t.operatorName?.toLowerCase().includes(term) ||
         t.shopName?.toLowerCase().includes(term) ||
+        t.agentName?.toLowerCase().includes(term) ||
         t.serviceName?.toLowerCase().includes(term) ||
         (t.govtAckNo && t.govtAckNo.toLowerCase().includes(term)))
     );
@@ -165,11 +243,12 @@ export default function AdminTaskVerification() {
 
   const awaitingCount = tasks.filter(t => t.status?.toLowerCase() === 'completed').length;
   const verifiedCount = tasks.filter(t => t.status?.toLowerCase() === 'verified').length;
+  const rejectedCount = tasks.filter(t => t.status?.toLowerCase() === 'rejected').length;
 
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
-        
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
@@ -204,31 +283,37 @@ export default function AdminTaskVerification() {
         <div className="bg-white rounded-xl border border-slate-200 p-2 shadow-xs flex flex-wrap items-center gap-2">
           <button
             onClick={() => setActiveFilter('COMPLETED')}
-            className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-              activeFilter === 'COMPLETED'
+            className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${activeFilter === 'COMPLETED'
                 ? 'bg-blue-600 text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100'
-            }`}
+              }`}
           >
             Awaiting Verification ({awaitingCount})
           </button>
           <button
             onClick={() => setActiveFilter('VERIFIED')}
-            className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-              activeFilter === 'VERIFIED'
+            className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${activeFilter === 'VERIFIED'
                 ? 'bg-blue-600 text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100'
-            }`}
+              }`}
           >
-            VERIFIED ({verifiedCount})
+            Verified & Approved ({verifiedCount})
+          </button>
+          <button
+            onClick={() => setActiveFilter('REJECTED')}
+            className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${activeFilter === 'REJECTED'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+              }`}
+          >
+            Rejected ({rejectedCount})
           </button>
           <button
             onClick={() => setActiveFilter('ALL')}
-            className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-              activeFilter === 'ALL'
+            className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${activeFilter === 'ALL'
                 ? 'bg-blue-600 text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100'
-            }`}
+              }`}
           >
             ALL ({tasks.length})
           </button>
@@ -267,6 +352,8 @@ export default function AdminTaskVerification() {
               filtered.map((item) => {
                 const s = (item.status || '').toLowerCase();
                 const isVerified = s === 'verified';
+                const isCompleted = s === 'completed';
+                const isRejected = s === 'rejected';
 
                 return (
                   <div
@@ -285,18 +372,33 @@ export default function AdminTaskVerification() {
                       </div>
 
                       <span
-                        className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-0.5 rounded-full border ${
-                          isVerified
+                        className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-0.5 rounded-full border ${isVerified
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                            : 'bg-amber-50 text-amber-700 border-amber-300'
-                        }`}
+                            : isCompleted
+                              ? 'bg-amber-50 text-amber-700 border-amber-300'
+                              : isRejected
+                                ? 'bg-red-50 text-red-700 border-red-300'
+                                : 'bg-slate-100 text-slate-700 border-slate-300'
+                          }`}
                       >
                         {isVerified ? (
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                        ) : (
+                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : isCompleted ? (
                           <Clock className="h-3.5 w-3.5 text-amber-600" />
+                        ) : isRejected ? (
+                          <XCircle className="h-3.5 w-3.5 text-red-600" />
+                        ) : (
+                          <Clock className="h-3.5 w-3.5 text-slate-500" />
                         )}
-                        <span>{isVerified ? 'VERIFIED' : 'AWAITING VERIFICATION'}</span>
+                        <span>
+                          {isVerified
+                            ? 'VERIFIED & APPROVED'
+                            : isCompleted
+                              ? 'AWAITING VERIFICATION'
+                              : isRejected
+                                ? 'REJECTED'
+                                : s.toUpperCase()}
+                        </span>
                       </span>
                     </div>
 
@@ -324,13 +426,16 @@ export default function AdminTaskVerification() {
                       </div>
                     </div>
 
-                    {/* Govt Ack Ref if available */}
-                    {item.govtAckNo && (
-                      <div className="text-xs text-slate-700 bg-blue-50/70 p-2.5 rounded-xl border border-blue-200/60 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-                          <span>Govt Output Ref: <strong className="font-mono text-slate-900">{item.govtAckNo}</strong></span>
-                        </div>
+                    {/* Operator Remark on Card */}
+                    {getOperatorNote(item.completionOutputData) && (
+                      <div className="bg-teal-50/80 p-3 rounded-xl border border-teal-200/80 text-xs">
+                        <span className="text-[10px] font-bold text-teal-800 uppercase tracking-wider block mb-0.5 flex items-center gap-1">
+                          <FileText className="h-3.5 w-3.5 text-teal-600" />
+                          <span>Operator Remarks / Work Note:</span>
+                        </span>
+                        <p className="text-slate-800 font-medium italic pl-3 border-l-2 border-teal-500">
+                          "{getOperatorNote(item.completionOutputData)}"
+                        </p>
                       </div>
                     )}
 
@@ -362,7 +467,7 @@ export default function AdminTaskVerification() {
         {viewModalTask && (
           <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 z-50 overflow-y-auto">
             <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-100 relative overflow-hidden my-auto">
-              
+
               <div className="px-6 py-4 bg-white border-b border-slate-100 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-blue-50 border border-blue-200/60 rounded-xl text-blue-600">
@@ -382,7 +487,7 @@ export default function AdminTaskVerification() {
               </div>
 
               <div className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1 text-xs">
-                
+
                 {/* Service Details Banner */}
                 <div className="bg-slate-900 p-4 rounded-2xl text-white space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -404,51 +509,109 @@ export default function AdminTaskVerification() {
                   </div>
                 </div>
 
-                {/* Attached Deliverables / Documents */}
-                {viewModalTask.documents && viewModalTask.documents.length > 0 && (
-                  <div className="space-y-2.5">
-                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                      📁 Documents & Deliverables ({viewModalTask.documents.length})
-                    </span>
-                    <div className="space-y-2">
-                      {viewModalTask.documents.map((doc, idx) => (
-                        <div key={idx} className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
-                          <div>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase block">{doc.label}</span>
-                            <span className="font-mono text-xs font-bold text-slate-900">{doc.fileName}</span>
-                          </div>
-                          <button
-                            onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
-                            className="px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                            <span>Download</span>
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* 1. Operator Completion Remarks & Deliverables Section */}
+                {(() => {
+                  const { operatorDocs } = getDocumentCategories(viewModalTask.documents, viewModalTask.completionOutputData);
+                  const opNote = getOperatorNote(viewModalTask.completionOutputData);
+                  if (!opNote && operatorDocs.length === 0) return null;
 
-                {/* Applicant Submitted Data */}
-                {viewModalTask.formData && (
-                  <div className="space-y-2.5">
-                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                      Applicant Form Information
-                    </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      {Object.entries(parsedFormData(viewModalTask.formData)).map(([label, value]) => {
-                        if (String(value).includes('Uploaded Document')) return null;
-                        return (
-                          <div key={label} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-0.5">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase block">{label}</span>
-                            <span className="text-xs font-semibold text-slate-900 break-words">{String(value)}</span>
-                          </div>
-                        );
-                      })}
+                  return (
+                    <div className="space-y-3 bg-teal-50/80 p-4 rounded-2xl border border-teal-200/80">
+                      <span className="text-xs font-bold text-teal-900 uppercase tracking-wider block flex items-center gap-1.5">
+                        <FileText className="h-4 w-4 text-teal-600" />
+                        <span>Operator Work Completion & Deliverables</span>
+                      </span>
+
+                      {opNote && (
+                        <div>
+                          <span className="text-[10px] font-bold text-teal-700 uppercase block mb-1">Work Note / Remarks</span>
+                          <p className="text-slate-800 font-medium italic bg-white p-3 rounded-xl border border-teal-200/60">
+                            "{opNote}"
+                          </p>
+                        </div>
+                      )}
+
+                      {operatorDocs.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-bold text-teal-800 uppercase block">
+                            📄 Output Certificate / Response Files ({operatorDocs.length})
+                          </span>
+                          {operatorDocs.map((doc, idx) => (
+                            <div key={idx} className="bg-white p-3 rounded-xl border border-teal-200/80 flex items-center justify-between gap-2">
+                              <div className="overflow-hidden">
+                                <span className="text-[10px] font-bold text-teal-700 uppercase block">{doc.label}</span>
+                                <span className="font-mono text-xs font-bold text-slate-900 truncate block">{doc.fileName}</span>
+                              </div>
+                              <button
+                                onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors shadow-xs"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                <span>Download Output</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
+
+                {/* 2. Applicant Submission Details & Proof Documents */}
+                {(() => {
+                  const { clientDocs } = getDocumentCategories(viewModalTask.documents, viewModalTask.completionOutputData);
+                  const validFormEntries = Object.entries(parsedFormData(viewModalTask.formData)).filter(([k, v]) => isApplicantFormField(k, v));
+
+                  return (
+                    <div className="space-y-3 pt-2 border-t border-slate-200">
+                      {/* Form Details */}
+                      {validFormEntries.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                            Applicant Form Information
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            {validFormEntries.map(([label, value]) => {
+                              const cleanLabel = label.replace(/^\[.*?\]:\s*/, '');
+                              return (
+                                <div key={label} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-0.5">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase block">{cleanLabel}</span>
+                                  <span className="text-xs font-semibold text-slate-900 break-words">{String(value)}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Client Proof Documents */}
+                      {clientDocs.length > 0 && (
+                        <div className="space-y-2 pt-2">
+                          <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                            📁 Applicant Attached Proof Documents ({clientDocs.length})
+                          </span>
+                          <div className="space-y-2">
+                            {clientDocs.map((doc, idx) => (
+                              <div key={idx} className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-2">
+                                <div className="overflow-hidden">
+                                  <span className="text-[10px] font-bold text-slate-500 uppercase block">{doc.label}</span>
+                                  <span className="font-mono text-xs font-bold text-slate-900 truncate block">{doc.fileName}</span>
+                                </div>
+                                <button
+                                  onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                                  className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                  <span>Download</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
               </div>
 

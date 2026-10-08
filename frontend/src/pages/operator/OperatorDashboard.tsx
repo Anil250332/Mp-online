@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import apiClient from '../../api/client';
+import { walletStore } from '../../services/walletStore';
 import {
   Inbox,
   CheckCircle2,
@@ -16,6 +17,7 @@ export const OperatorDashboard: React.FC = () => {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<number>(0);
 
   const fetchQueue = useCallback(async () => {
     setIsLoading(true);
@@ -24,6 +26,8 @@ export const OperatorDashboard: React.FC = () => {
       if (res.data.status === 'success') {
         setTasks(res.data.data);
       }
+      await walletStore.syncBackend();
+      setWalletBalance(walletStore.getBalance());
     } catch (e) {
       console.error('Failed to load operator queue', e);
     } finally {
@@ -33,12 +37,15 @@ export const OperatorDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchQueue();
+    const unsubscribe = walletStore.subscribe(() => {
+      setWalletBalance(walletStore.getBalance());
+    });
+    return unsubscribe;
   }, [fetchQueue]);
 
   const pendingTasks = tasks.filter(t => ['pending', 'assigned', 'processing'].includes(t.status?.toLowerCase()));
   const completedTasks = tasks.filter(t => ['completed', 'verified'].includes(t.status?.toLowerCase()));
   const rejectedTasks = tasks.filter(t => t.status?.toLowerCase() === 'rejected');
-  const totalEarnings = completedTasks.reduce((sum, t) => sum + Number(t.operatorPayout || 0), 0);
 
   return (
     <DashboardLayout
@@ -139,16 +146,18 @@ export const OperatorDashboard: React.FC = () => {
             </div>
           </Link>
 
-          {/* Total Earned */}
+          {/* Operator Wallet Balance */}
           <Link
             to="/operator/wallet"
             className="bg-white rounded-2xl border border-slate-200/80 p-4.5 shadow-xs hover:shadow-md hover:border-teal-300 transition-all flex items-center justify-between group cursor-pointer"
           >
             <div>
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Earned</span>
-              <div className="text-2xl font-black text-teal-600 mt-1">₹ {totalEarnings.toFixed(2)}</div>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Wallet Balance</span>
+              <div className="text-2xl font-black text-teal-600 mt-1">
+                ₹ {walletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
               <p className="text-[11px] text-teal-700 font-semibold mt-1">
-                Operator Wallet Balance
+                Available Operator Balance
               </p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center font-bold border border-teal-100 group-hover:scale-105 transition-transform">
@@ -193,7 +202,6 @@ export const OperatorDashboard: React.FC = () => {
                       <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-semibold">{task.serviceCode}</span>
                     </div>
                     <span className="font-bold text-slate-900 text-sm block mt-0.5">{task.serviceName}</span>
-                    <span className="text-xs text-slate-500">Applicant: <strong className="text-slate-700">{task.customerName || 'Citizen'}</strong> • Kiosk: <strong className="text-slate-700">{task.shopName || task.agentName}</strong></span>
                   </div>
 
                   <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">

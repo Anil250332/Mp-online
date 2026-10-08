@@ -16,7 +16,6 @@ import {
   RotateCcw,
   Building,
   MapPin,
-  Hash,
   Award
 } from 'lucide-react';
 
@@ -25,7 +24,6 @@ export const RegisterPage: React.FC = () => {
   const [role, setRole] = useState<'agent' | 'operator'>('agent');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [debugOtp, setDebugOtp] = useState<string | null>(null);
 
   // Form State
   const [fullName, setFullName] = useState('');
@@ -33,7 +31,7 @@ export const RegisterPage: React.FC = () => {
   const [shopName, setShopName] = useState('');
   const [officeName, setOfficeName] = useState('');
   const [designation, setDesignation] = useState('');
-  const [wardNumber, setWardNumber] = useState('');
+  const [wardNumber] = useState('');
   const [area, setArea] = useState('');
   const [email, setEmail] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
@@ -81,15 +79,45 @@ export const RegisterPage: React.FC = () => {
       });
 
       if (response.data.status === 'success') {
-        if (response.data.debug_otp) {
-          setDebugOtp(response.data.debug_otp);
-        }
         setStep(2);
       }
     } catch (error: any) {
       setErrorMessage(error.response?.data?.message || 'OTP request failed. Kripya dobara try karein.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const [resendMessage, setResendMessage] = useState('');
+  const [isResending, setIsResending] = useState(false);
+
+  // Resend OTP Handler
+  const handleResendOtp = async () => {
+    setErrorMessage('');
+    setResendMessage('');
+    setIsResending(true);
+    try {
+      const response = await apiClient.post('/auth/register-otp', {
+        role,
+        full_name: fullName,
+        mobile,
+        shop_name: shopName,
+        office_name: officeName,
+        designation,
+        ward_no: wardNumber,
+        area,
+        email,
+        aadhaar_number: aadhaarNumber,
+        address
+      });
+
+      if (response.data.status === 'success') {
+        setResendMessage('Naya OTP email par successfully bhej diya gaya hai!');
+      }
+    } catch (error: any) {
+      setErrorMessage(error.response?.data?.message || 'OTP resend failed. Kripya dobara try karein.');
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -199,7 +227,7 @@ export const RegisterPage: React.FC = () => {
                 <div className="text-center mb-6">
                   <h2 className="text-xl font-bold text-slate-900">Partner Registration</h2>
                   <p className="text-xs text-slate-500 mt-1">
-                    Select your role and verify mobile via WhatsApp OTP
+                    Select your role and verify via Email OTP
                   </p>
                 </div>
 
@@ -255,7 +283,7 @@ export const RegisterPage: React.FC = () => {
                     {/* WhatsApp Mobile */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        WhatsApp Mobile *
+                        Mobile Number *
                       </label>
                       <div className="relative">
                         <Phone className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
@@ -364,24 +392,7 @@ export const RegisterPage: React.FC = () => {
                   </div>
 
                   {role === 'operator' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Ward Number */}
-                      <div>
-                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                          Ward Number
-                        </label>
-                        <div className="relative">
-                          <Hash className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
-                          <input
-                            type="text"
-                            placeholder="Ward / Block No."
-                            value={wardNumber}
-                            onChange={(e) => setWardNumber(e.target.value)}
-                            className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
-                          />
-                        </div>
-                      </div>
-
+                    <div>
                       {/* Area / Location */}
                       <div>
                         <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -425,7 +436,7 @@ export const RegisterPage: React.FC = () => {
                         <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
                       ) : (
                         <>
-                          <span>Send WhatsApp OTP</span>
+                          <span>Send Email OTP</span>
                           <ArrowRight className="h-4 w-4" />
                         </>
                       )}
@@ -439,7 +450,7 @@ export const RegisterPage: React.FC = () => {
             {step === 2 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-bold text-slate-900">Verify WhatsApp OTP</h2>
+                  <h2 className="text-lg font-bold text-slate-900">Verify OTP</h2>
                   <button
                     type="button"
                     onClick={() => setStep(1)}
@@ -451,19 +462,14 @@ export const RegisterPage: React.FC = () => {
                 </div>
 
                 <p className="text-xs text-slate-600 mb-4">
-                  OTP sent to WhatsApp <strong className="text-emerald-700">+91-{mobile}</strong>.
+                  {email ? <span>OTP sent to Email <strong className="text-blue-700">{email}</strong> & Mobile <strong className="text-emerald-700">+91-{mobile}</strong>.</span> : <span>OTP sent to Mobile <strong className="text-emerald-700">+91-{mobile}</strong>.</span>}
+                  <span className="block text-[11px] text-slate-500 mt-0.5">⏱️ OTP is valid for 5 minutes.</span>
                 </p>
 
-                {debugOtp && (
-                  <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs flex items-center justify-between">
-                    <span>⚡ Dev Mode OTP: <strong>{debugOtp}</strong></span>
-                    <button
-                      type="button"
-                      onClick={() => setOtp(debugOtp)}
-                      className="underline text-emerald-900 font-bold text-[11px]"
-                    >
-                      Auto-Fill
-                    </button>
+                {resendMessage && (
+                  <div className="mb-4 p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
+                    <span>{resendMessage}</span>
                   </div>
                 )}
 
@@ -483,6 +489,23 @@ export const RegisterPage: React.FC = () => {
                         className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 tracking-widest text-center text-base font-bold focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
                         required
                       />
+                    </div>
+                    <div className="mt-1.5 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleResendOtp}
+                        disabled={isResending}
+                        className="text-xs font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {isResending ? (
+                          <span>Resending OTP...</span>
+                        ) : (
+                          <>
+                            <RotateCcw className="h-3 w-3" />
+                            <span>Resend Email OTP</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
 
@@ -553,7 +576,7 @@ export const RegisterPage: React.FC = () => {
                     Status: Pending Admin / Manager Approval
                   </p>
                   <p className="text-slate-600">
-                    Aapka {role === 'agent' ? 'MP Online Shop' : 'Officer Operator'} account register ho chuka hai. Verification hote hi aapko WhatsApp par update milega.
+                    Aapka {role === 'agent' ? 'MP Online Shop' : 'Officer Operator'} account register ho chuka hai. Verification hote hi aapko Email par update milega.
                   </p>
                 </div>
 

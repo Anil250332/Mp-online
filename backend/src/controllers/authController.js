@@ -2,10 +2,13 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import pool from '../config/db.js';
 import { generateToken } from '../utils/jwt.js';
-import { sendWhatsAppOtp } from '../services/whatsappService.js';
+import { sendOtpEmail, sendAdminRegistrationAlert, sendPasswordChangedEmail, sendPasswordResetOtpEmail } from '../utils/mailer.js';
 
-// In-memory temporary store for OTPs (Mobile -> { otp, data, expiresAt })
+// In-memory temporary store for Registration OTPs (Mobile -> { otp, data, expiresAt })
 const otpStore = new Map();
+
+// In-memory temporary store for Password Reset OTPs (Email -> { otp, userId, userName, expiresAt })
+const passwordResetOtpStore = new Map();
 
 /**
  * 1. Step 1: Request OTP for Self-Registration (Agent or Operator)
@@ -63,14 +66,14 @@ export const requestRegistrationOtp = async (req, res) => {
       }
     });
 
-    // Send OTP via WhatsApp / Console
-    await sendWhatsAppOtp(mobile, otp);
+    // Dispatch OTP via Email Notification module
+    if (email) {
+      sendOtpEmail(email, otp, full_name).catch(err => console.error('Email OTP dispatch error:', err.message));
+    }
 
     return res.status(200).json({
       status: 'success',
-      message: `OTP sent successfully to WhatsApp +91-${mobile}. Check console in development!`,
-      // For development convenience:
-      debug_otp: process.env.NODE_ENV !== 'production' ? otp : undefined
+      message: `OTP sent successfully${email ? ' to email ' + email : ''}.`
     });
   } catch (error) {
     console.error('Request OTP Error:', error);
@@ -189,6 +192,15 @@ export const verifyRegistration = async (req, res) => {
 
     // Clean up OTP from memory
     otpStore.delete(mobile);
+
+    // Notify Admin about new registration (non-blocking)
+    sendAdminRegistrationAlert({
+      name: userData.full_name,
+      mobile: userData.mobile,
+      email: userData.email,
+      role: userData.role,
+      shopName: userData.shop_name
+    }).catch(err => console.error('Admin reg alert email error:', err.message));
 
     return res.status(201).json({
       status: 'success',
@@ -401,9 +413,198 @@ export const changePassword = async (req, res) => {
     const newHash = await bcrypt.hash(newPassword, 10);
     await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, userId]);
 
+    // Send security notification email
+    if (req.user?.email) {
+      sendPasswordChangedEmail({
+        toEmail: req.user.email,
+        userName: req.user.full_name
+      }).catch(err => console.error('Password change email error:', err.message));
+    }
+
     return res.status(200).json({ status: 'success', message: 'Password successfully updated!' });
   } catch (error) {
     console.error('Change Password Error:', error);
     return res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * 7. Request Password Reset OTP via Email (15 Min Expiry)
+ * POST /api/auth/forgot-password-otp
+ */
+export const requestForgotPasswordOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Email address zaroori hai. Kripya apna registered email enter karein.'
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Check if user exists with this email address
+    const [users] = await pool.query(
+      'SELECT id, full_name, email FROM users WHERE LOWER(email) = ? AND is_active = true',
+      [cleanEmail]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Is email address par koi active account registered nahi hai. Kripya sahi email enter karein.'
+      });
+    }
+
+    const user = users[0];
+
+    // Generate secure 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes validity
+
+    // Store in memory
+    passwordResetOtpStore.set(cleanEmail, {
+      otp,
+      expiresAt,
+      userId: user.id,
+      userName: user.full_name
+    });
+
+    // Send OTP via Nodemailer Email helper
+    sendPasswordResetOtpEmail(user.email, otp, user.full_name).catch(err =>
+      console.error('Password reset OTP email dispatch error:', err.message)
+    );
+
+    return res.status(200).json({
+      status: 'success',
+      message: `Password reset OTP aapki email (${user.email}) par bhej diya gaya hai. Ye OTP 15 minute ke liye valid hai.`
+    });
+  } catch (error) {
+    console.error('Request Forgot Password OTP Error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'OTP generation me error aaya: ' + error.message
+    });
+  }
+};
+
+/**
+ * 8. Verify Password Reset OTP
+ * POST /api/auth/verify-reset-otp
+ */
+export const verifyForgotPasswordOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Email aur OTP dono required hain.'
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const storedEntry = passwordResetOtpStore.get(cleanEmail);
+
+    if (!storedEntry) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'OTP session expire ho chuka hai ya koi request nahi mil. Kripya naya OTP request karein.'
+      });
+    }
+
+    if (Date.now() > storedEntry.expiresAt) {
+      passwordResetOtpStore.delete(cleanEmail);
+      return res.status(400).json({
+        status: 'error',
+        message: 'OTP expire ho gaya hai (15 minutes limit exceeded). Kripya Resend OTP par click karein.'
+      });
+    }
+
+    if (storedEntry.otp !== otp.trim()) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Galat OTP enter kiya gaya hai. Kripya sahi 6-digit OTP daalein.'
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'OTP safaltapoorvak verify ho gaya hai! Kripya naya password set karein.'
+    });
+  } catch (error) {
+    console.error('Verify Reset OTP Error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'OTP verification me error aaya: ' + error.message
+    });
+  }
+};
+
+/**
+ * 9. Set New Password After OTP Verification
+ * POST /api/auth/reset-password
+ */
+export const resetPasswordWithOtp = async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Email, OTP aur Naya Password required hain.'
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Naya Password kam se kam 6 characters ka hona chahiye.'
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const storedEntry = passwordResetOtpStore.get(cleanEmail);
+
+    if (!storedEntry || Date.now() > storedEntry.expiresAt) {
+      passwordResetOtpStore.delete(cleanEmail);
+      return res.status(400).json({
+        status: 'error',
+        message: 'Session expire ho gaya hai. Kripya shuru se OTP request karein.'
+      });
+    }
+
+    if (storedEntry.otp !== otp.trim()) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Galat OTP enter kiya gaya hai.'
+      });
+    }
+
+    // Hash new password and update DB
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE users SET password_hash = ? WHERE LOWER(email) = ?', [newHash, cleanEmail]);
+
+    // Clean up OTP store session
+    passwordResetOtpStore.delete(cleanEmail);
+
+    // Send confirmation email
+    sendPasswordChangedEmail({
+      toEmail: cleanEmail,
+      userName: storedEntry.userName
+    }).catch(err => console.error('Reset password email error:', err.message));
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Password safaltapoorvak reset ho gaya hai! Aap ab apne naye password se login kar sakte hain.'
+    });
+  } catch (error) {
+    console.error('Reset Password Error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Password reset karne me error aaya: ' + error.message
+    });
   }
 };

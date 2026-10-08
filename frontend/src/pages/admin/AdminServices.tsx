@@ -87,6 +87,14 @@ export default function AdminServices() {
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
 
+  // ── Admin Price Approval Desk State ──
+  const [activeMainTab, setActiveMainTab] = useState<'services' | 'price_requests'>('services');
+  const [allPriceRequests, setAllPriceRequests] = useState<any[]>([]);
+  const [reviewModalRequest, setReviewModalRequest] = useState<any | null>(null);
+  const [reviewApprovedPrice, setReviewApprovedPrice] = useState<string>('');
+  const [reviewRemarks, setReviewRemarks] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+
   const fetchOperators = useCallback(async () => {
     try {
       const res = await apiClient.get('/users?role=operator');
@@ -105,6 +113,40 @@ export default function AdminServices() {
     } catch (e) { console.error('Failed to fetch assignments:', e); }
   }, []);
 
+  const fetchPriceRequests = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/services/price-requests');
+      if (res.data.status === 'success') {
+        setAllPriceRequests(res.data.data);
+      }
+    } catch (e) { console.error('Failed to fetch price requests:', e); }
+  }, []);
+
+  const handleReviewPriceRequest = async (requestId: string, status: 'approved' | 'rejected') => {
+    setReviewSubmitting(true);
+    try {
+      const res = await apiClient.patch(`/services/price-requests/${requestId}/review`, {
+        status,
+        approvedPrice: parseFloat(reviewApprovedPrice),
+        adminRemarks: reviewRemarks
+      });
+
+      if (res.data.status === 'success') {
+        setSuccessMsg(res.data.message || `Price request ${status} successfully!`);
+        setReviewModalRequest(null);
+        setReviewRemarks('');
+        await fetchPriceRequests();
+        await serviceStore.syncBackend();
+        setTimeout(() => setSuccessMsg(''), 5000);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.response?.data?.message || 'Failed to review price request.');
+      setTimeout(() => setErrorMsg(''), 5000);
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     const update = () => {
       setServices(serviceStore.getServices());
@@ -114,8 +156,9 @@ export default function AdminServices() {
     const unsubscribe = serviceStore.subscribe(update);
     fetchOperators();
     fetchAssignments();
+    fetchPriceRequests();
     return unsubscribe;
-  }, [fetchOperators, fetchAssignments]);
+  }, [fetchOperators, fetchAssignments, fetchPriceRequests]);
 
   // Get the routing mode for the currently selected service in assign modal
   const getSelectedServiceMode = (): 'single' | 'area_wise' | 'ward_wise' => {
@@ -178,15 +221,6 @@ export default function AdminServices() {
       setAssignError(err.response?.data?.message || 'Failed to assign operator.');
     } finally {
       setAssignSubmitting(false);
-    }
-  };
-
-  const handleDeleteAssignment = async (assignmentId: string) => {
-    try {
-      await apiClient.delete(`/operator-assignments/${assignmentId}`);
-      await fetchAssignments();
-    } catch (e) {
-      console.error('Failed to delete assignment:', e);
     }
   };
 
@@ -882,6 +916,244 @@ export default function AdminServices() {
           </div>
         </div>
 
+        {/* Main Navigation Tabs */}
+        <div className="flex items-center gap-2 border-b border-slate-200">
+          <button
+            onClick={() => setActiveMainTab('services')}
+            className={`px-4 py-2.5 text-xs font-bold border-b-2 flex items-center gap-2 cursor-pointer transition-colors ${
+              activeMainTab === 'services'
+                ? 'border-blue-600 text-blue-700 bg-blue-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Layers className="h-4 w-4" />
+            <span>Master Services & Configurations ({services.length})</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveMainTab('price_requests');
+              fetchPriceRequests();
+            }}
+            className={`px-4 py-2.5 text-xs font-bold border-b-2 flex items-center gap-2 cursor-pointer transition-colors ${
+              activeMainTab === 'price_requests'
+                ? 'border-teal-600 text-teal-700 bg-teal-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <IndianRupee className="h-4 w-4" />
+            <span>Operator Price Approval Desk</span>
+            {allPriceRequests.filter((p: any) => p.status === 'pending').length > 0 && (
+              <span className="bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                {allPriceRequests.filter((p: any) => p.status === 'pending').length} New
+              </span>
+            )}
+          </button>
+        </div>
+
+        {activeMainTab === 'price_requests' ? (
+          /* Operator Price Approval Desk Section */
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs space-y-4 p-5">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                  <IndianRupee className="h-5 w-5 text-teal-600" />
+                  <span>Operator Price Change Approval Desk</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Review & approve operator custom rate requests for Single Services, Area Branches, or Ward Locations. Approving immediately updates the live rate.
+                </p>
+              </div>
+
+              <button
+                onClick={fetchPriceRequests}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-teal-600" />
+                <span>Refresh Requests</span>
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 uppercase text-[11px] font-bold border-b border-slate-200">
+                    <th className="py-3 px-4">Request No</th>
+                    <th className="py-3 px-4">Operator Name</th>
+                    <th className="py-3 px-4">Service & Scope</th>
+                    <th className="py-3 px-4 text-center">Current Rate</th>
+                    <th className="py-3 px-4 text-center">Requested Rate</th>
+                    <th className="py-3 px-4">Operator Reason</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {allPriceRequests.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-slate-400 text-xs italic">
+                        No operator price change requests found.
+                      </td>
+                    </tr>
+                  ) : (
+                    allPriceRequests.map((pr: any) => (
+                      <tr key={pr.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4 font-mono font-bold text-blue-700">{pr.requestNo}</td>
+                        <td className="py-3 px-4 font-bold text-slate-800">
+                          {pr.operatorName}
+                          <span className="text-[11px] text-slate-400 block font-normal">{pr.operatorMobile}</span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="font-semibold text-slate-900 block">{pr.subServiceName}</span>
+                          <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-semibold inline-block mt-0.5">
+                            {pr.areaOrWardLabel}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-bold text-slate-500 line-through">
+                          ₹{pr.currentPrice.toFixed(2)}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-black text-emerald-600 text-sm">
+                          ₹{pr.requestedPrice.toFixed(2)}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 max-w-xs truncate text-xs">
+                          {pr.reason || 'N/A'}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                            pr.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            pr.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' :
+                            'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
+                          }`}>
+                            {pr.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right space-x-2">
+                          {pr.status === 'pending' ? (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setReviewModalRequest(pr);
+                                  setReviewApprovedPrice(String(pr.requestedPrice || ''));
+                                  setReviewRemarks('');
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
+                              >
+                                Review Request
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-400 italic">
+                              {pr.adminRemarks ? `Remarks: ${pr.adminRemarks}` : 'Reviewed'}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Review Request Modal */}
+            {reviewModalRequest && (
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+                <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <h3 className="font-bold text-slate-800 text-sm">Review Operator Price Change Request</h3>
+                    <button onClick={() => setReviewModalRequest(null)} className="text-slate-400 hover:text-slate-600">
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
+                    <p><span className="font-bold">Operator:</span> {reviewModalRequest.operatorName} ({reviewModalRequest.operatorMobile})</p>
+                    <p><span className="font-bold">Service/Scope:</span> {reviewModalRequest.subServiceName} ({reviewModalRequest.areaOrWardLabel})</p>
+                    <p><span className="font-bold">Requested Rate:</span> <span className="font-bold text-emerald-600 text-sm">₹{reviewModalRequest.requestedPrice.toFixed(2)}</span> (Current: ₹{reviewModalRequest.currentPrice.toFixed(2)})</p>
+                    {reviewModalRequest.reason && <p><span className="font-bold">Reason:</span> {reviewModalRequest.reason}</p>}
+                  </div>
+
+                  {/* Admin Editable Approved Amount Field */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Approved Amount (₹) <span className="text-rose-500">*</span>
+                      <span className="text-[10px] font-normal text-slate-500 block">Modify this value if you want to set a custom approved rate</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      placeholder="Enter amount to set..."
+                      value={reviewApprovedPrice}
+                      onChange={(e) => setReviewApprovedPrice(e.target.value)}
+                      className="w-full bg-white border border-teal-500 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-600"
+                      required
+                    />
+                  </div>
+
+                  {/* Live Profit & Share Breakdown Card for Admin */}
+                  {(() => {
+                    const appFee = parseFloat(reviewApprovedPrice || '0');
+                    if (isNaN(appFee) || appFee <= 0) return null;
+                    const commPercent = Number(reviewModalRequest.adminCommissionPercent || 0);
+                    const adminShare = (appFee * commPercent) / 100;
+                    const opShare = appFee - adminShare;
+
+                    return (
+                      <div className="bg-indigo-50/90 border border-indigo-200 p-3.5 rounded-xl space-y-1.5 text-xs text-indigo-950">
+                        <div className="font-bold text-[10px] text-indigo-800 uppercase tracking-wider mb-0.5">💰 Financial Distribution Breakdown</div>
+                        <div className="flex justify-between items-center text-slate-700">
+                          <span>Agent Pays (Wallet Deduction):</span>
+                          <strong className="font-mono text-slate-900">₹{appFee.toFixed(2)}</strong>
+                        </div>
+                        {commPercent > 0 && (
+                          <div className="flex justify-between items-center text-indigo-800 font-semibold">
+                            <span>Admin Commission Profit ({commPercent}%):</span>
+                            <strong className="font-mono text-indigo-900">+ ₹{adminShare.toFixed(2)}</strong>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center font-bold text-emerald-900 pt-1.5 border-t border-indigo-200/80">
+                          <span>Operator Payout Earning:</span>
+                          <strong className="font-mono text-sm text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
+                            ₹{opShare.toFixed(2)}
+                          </strong>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Admin Remarks (Optional)</label>
+                    <textarea
+                      rows={2}
+                      placeholder="Add note for operator..."
+                      value={reviewRemarks}
+                      onChange={(e) => setReviewRemarks(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-teal-600"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      onClick={() => handleReviewPriceRequest(reviewModalRequest.id, 'rejected')}
+                      disabled={reviewSubmitting}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      Reject Request
+                    </button>
+                    <button
+                      onClick={() => handleReviewPriceRequest(reviewModalRequest.id, 'approved')}
+                      disabled={reviewSubmitting}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 shadow-md"
+                    >
+                      Approve & Apply New Rate
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Master Services Catalog View */
+          <>
         {/* Search & Filter Chips Bar */}
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -1179,6 +1451,8 @@ export default function AdminServices() {
             </div>
           )}
         </div>
+        </>
+        )}
 
         {/* ========================================================================= */}
         {/* MODAL: CREATE (STEP WIZARD) VS EDIT (ALL-IN-ONE DIRECT TABS)              */}
@@ -2239,37 +2513,6 @@ export default function AdminServices() {
                   </button>
                 </form>
 
-                {/* Existing Assignments List */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                    Active Service Assignments ({allAssignments.length})
-                  </h4>
-                  {allAssignments.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic">No custom operator assignments created yet.</p>
-                  ) : (
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                      {allAssignments.map((as: any) => (
-                        <div key={as.id} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-                          <div>
-                            <span className="font-bold text-slate-800">{as.service_name}</span>
-                            <span className="text-slate-400 mx-1.5">→</span>
-                            <span className="text-indigo-600 font-semibold">{as.operator_name}</span>
-                            {as.ward_no && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold">Ward {as.ward_no}</span>}
-                            {as.area_label && <span className="ml-2 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">{as.area_label}</span>}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteAssignment(as.id)}
-                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors"
-                            title="Remove assignment"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
 
               </div>
 

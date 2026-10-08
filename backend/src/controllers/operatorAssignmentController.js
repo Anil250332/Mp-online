@@ -19,12 +19,15 @@ export const getAssignments = async (req, res) => {
         oa.ward_no,
         oa.area_label,
         oa.is_active,
+        oa.custom_fee,
         oa.created_at,
         u.full_name as operatorName,
         u.mobile as operatorMobile,
         u.is_online as operatorOnline,
         ss.name as subServiceName,
         ss.code as subServiceCode,
+        ss.fee as default_fee,
+        COALESCE(ss.admin_commission_percentage, s.admin_commission_percentage, 0.00) as adminCommissionPercent,
         ss.service_id,
         ss.operator_assignment_mode as assignmentMode,
         s.name as serviceName,
@@ -38,9 +41,15 @@ export const getAssignments = async (req, res) => {
 
     const params = [];
 
-    if (operator_id) {
+    // Filter by logged-in operator if role is operator
+    let effectiveOperatorId = operator_id;
+    if (!effectiveOperatorId && req.user && req.user.role === 'operator') {
+      effectiveOperatorId = req.user.id;
+    }
+
+    if (effectiveOperatorId) {
       query += ' AND oa.operator_id = ?';
-      params.push(operator_id);
+      params.push(effectiveOperatorId);
     }
     if (sub_service_id) {
       query += ' AND oa.sub_service_id = ?';
@@ -55,25 +64,38 @@ export const getAssignments = async (req, res) => {
 
     const [rows] = await pool.query(query, params);
 
-    const formatted = rows.map(r => ({
-      id: r.id.toString(),
-      operatorId: r.operator_id.toString(),
-      operatorName: r.operatorName,
-      operatorMobile: r.operatorMobile,
-      operatorOnline: !!r.operatorOnline,
-      subServiceId: r.sub_service_id.toString(),
-      subServiceName: r.subServiceName,
-      subServiceCode: r.subServiceCode,
-      serviceId: r.service_id.toString(),
-      serviceName: r.serviceName,
-      assignmentMode: r.assignmentMode || r.serviceAssignmentMode || 'single',
-      district: r.district || 'Gwalior',
-      tehsil: r.tehsil || '',
-      wardNo: r.ward_no || '',
-      areaLabel: r.area_label || '',
-      isActive: !!r.is_active,
-      createdAt: r.created_at
-    }));
+    const formatted = rows.map(r => {
+      const commPercent = parseFloat(r.adminCommissionPercent || 0);
+      const totalFee = (r.custom_fee !== null && r.custom_fee !== undefined) ? parseFloat(r.custom_fee) : parseFloat(r.default_fee || 0);
+      const adminProfit = (totalFee * commPercent) / 100;
+      const operatorShare = totalFee - adminProfit;
+
+      return {
+        id: r.id.toString(),
+        operatorId: r.operator_id.toString(),
+        operatorName: r.operatorName,
+        operatorMobile: r.operatorMobile,
+        operatorOnline: !!r.operatorOnline,
+        subServiceId: r.sub_service_id.toString(),
+        subServiceName: r.subServiceName,
+        subServiceCode: r.subServiceCode,
+        serviceId: r.service_id.toString(),
+        serviceName: r.serviceName,
+        assignmentMode: (r.area_label && r.area_label.trim()) ? 'area_wise' : (r.ward_no && String(r.ward_no).trim()) ? 'ward_wise' : (r.assignmentMode || r.serviceAssignmentMode || 'single'),
+        district: r.district || 'Gwalior',
+        tehsil: r.tehsil || '',
+        wardNo: r.ward_no || '',
+        areaLabel: r.area_label || '',
+        customFee: r.custom_fee !== null && r.custom_fee !== undefined ? parseFloat(r.custom_fee) : null,
+        totalFee: totalFee,
+        adminCommissionPercent: commPercent,
+        adminProfit: adminProfit,
+        operatorShare: operatorShare,
+        currentFee: operatorShare, // Net amount after admin commission cut
+        isActive: !!r.is_active,
+        createdAt: r.created_at
+      };
+    });
 
     return res.status(200).json({ status: 'success', data: formatted });
   } catch (error) {
@@ -284,22 +306,23 @@ export const getAvailableAreas = async (req, res) => {
       }
     }
 
-    // Build query to get available areas/wards based on assignments
+    // Build query to get available areas/wards based on assignments with pricing
     let query = '';
     const params = [];
 
     if (targetSubServiceId) {
       query = `
-        SELECT DISTINCT oa.area_label, oa.ward_no, oa.district
+        SELECT DISTINCT oa.area_label, oa.ward_no, oa.district, oa.custom_fee, ss.fee as default_fee
         FROM operator_assignments oa
         JOIN users u ON oa.operator_id = u.id
+        JOIN sub_services ss ON oa.sub_service_id = ss.id
         WHERE oa.sub_service_id = ? AND oa.is_active = true AND u.is_active = true
         ORDER BY oa.area_label ASC, CAST(oa.ward_no AS UNSIGNED) ASC
       `;
       params.push(targetSubServiceId);
     } else if (service_id) {
       query = `
-        SELECT DISTINCT oa.area_label, oa.ward_no, oa.district
+        SELECT DISTINCT oa.area_label, oa.ward_no, oa.district, oa.custom_fee, ss.fee as default_fee
         FROM operator_assignments oa
         JOIN users u ON oa.operator_id = u.id
         JOIN sub_services ss ON oa.sub_service_id = ss.id
@@ -314,7 +337,7 @@ export const getAvailableAreas = async (req, res) => {
     // Fallback: If sub_service_id didn't return any assignments, check all sub_services under parent service
     if (rows.length === 0 && sub_service_id) {
       const [parentRows] = await pool.query(
-        `SELECT DISTINCT oa.area_label, oa.ward_no, oa.district
+        `SELECT DISTINCT oa.area_label, oa.ward_no, oa.district, oa.custom_fee, ss.fee as default_fee
          FROM operator_assignments oa
          JOIN users u ON oa.operator_id = u.id
          JOIN sub_services ss ON oa.sub_service_id = ss.id
@@ -328,25 +351,34 @@ export const getAvailableAreas = async (req, res) => {
       }
     }
 
-    // Build separate area_label[] and ward_no[] arrays (unique, non-null)
+    // Build separate area_label[] and ward_no[] arrays with detailed price objects
     const areaLabels = [];
     const wardNos = [];
+    const areaDetails = [];
+    const wardDetails = [];
     const seenAreas = new Set();
     const seenWards = new Set();
+    let defaultBasePrice = 0.00;
 
     for (const r of rows) {
+      const price = (r.custom_fee !== null && r.custom_fee !== undefined) ? parseFloat(r.custom_fee) : parseFloat(r.default_fee || 0);
+      defaultBasePrice = parseFloat(r.default_fee || 0);
+
       if (r.area_label && !seenAreas.has(r.area_label)) {
         seenAreas.add(r.area_label);
         areaLabels.push(r.area_label);
+        areaDetails.push({ label: r.area_label, price });
       }
       if (r.ward_no && !seenWards.has(r.ward_no)) {
         seenWards.add(r.ward_no);
         wardNos.push(r.ward_no);
+        wardDetails.push({ wardNo: r.ward_no, label: `Gwalior Ward #${r.ward_no}`, price });
       }
     }
 
     // Sort wards numerically
     wardNos.sort((a, b) => parseInt(a) - parseInt(b));
+    wardDetails.sort((a, b) => parseInt(a.wardNo) - parseInt(b.wardNo));
 
     return res.status(200).json({
       status: 'success',
@@ -354,6 +386,9 @@ export const getAvailableAreas = async (req, res) => {
         mode: assignmentMode,
         areas: areaLabels,
         wards: wardNos,
+        areaDetails,
+        wardDetails,
+        basePrice: defaultBasePrice,
         hasOperators: rows.length > 0
       }
     });

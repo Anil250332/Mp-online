@@ -37,6 +37,18 @@ export default function OperatorWallet() {
   const [ifsc, setIfsc] = useState('');
   const [upiId, setUpiId] = useState('');
 
+  interface FieldErrors {
+    amount?: string;
+    accountHolderName?: string;
+    bankName?: string;
+    accountNo?: string;
+    confirmAccountNo?: string;
+    ifsc?: string;
+    upiId?: string;
+  }
+
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+
   const syncWallet = useCallback(async () => {
     setIsLoading(true);
     await walletStore.syncBackend();
@@ -56,6 +68,7 @@ export default function OperatorWallet() {
 
   const handleOpenWithdrawalModal = () => {
     setErrorMsg('');
+    setFieldErrors({});
     setAmount('');
     setAccountHolderName(user?.full_name || 'Operator');
     setAccountNo('');
@@ -65,42 +78,76 @@ export default function OperatorWallet() {
     setIsModalOpen(true);
   };
 
+  const validateForm = (): boolean => {
+    const errors: FieldErrors = {};
+    const val = parseFloat(amount);
+
+    if (!amount || isNaN(val) || val <= 0) {
+      errors.amount = 'Valid withdrawal amount enter karein.';
+    } else if (val > balance) {
+      errors.amount = `Insufficient wallet balance! Maximum available: ₹ ${balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    } else if (val < 10) {
+      errors.amount = 'Minimum withdrawal amount ₹ 10.00 hai.';
+    }
+
+    if (!accountHolderName.trim()) {
+      errors.accountHolderName = 'Account holder name required hai.';
+    } else if (accountHolderName.trim().length < 3) {
+      errors.accountHolderName = 'Account holder name kam se kam 3 letters ka hona chahiye.';
+    } else if (!/^[a-zA-Z\s.]+$/.test(accountHolderName.trim())) {
+      errors.accountHolderName = 'Name me sirf alphabets aur spaces allowed hain.';
+    }
+
+    if (!bankName.trim()) {
+      errors.bankName = 'Bank name required hai.';
+    }
+
+    const cleanAccNo = accountNo.trim();
+    if (!cleanAccNo) {
+      errors.accountNo = 'Account number required hai.';
+    } else if (!/^\d{9,18}$/.test(cleanAccNo)) {
+      errors.accountNo = 'Sahi Bank Account number (9-18 digits) enter karein.';
+    }
+
+    const cleanConfirmAccNo = confirmAccountNo.trim();
+    if (!cleanConfirmAccNo) {
+      errors.confirmAccountNo = 'Confirm account number required hai.';
+    } else if (cleanAccNo && cleanConfirmAccNo !== cleanAccNo) {
+      errors.confirmAccountNo = 'Account number aur Confirm account number match nahi kar rahe hain!';
+    }
+
+    const cleanIfsc = ifsc.trim().toUpperCase();
+    if (!cleanIfsc) {
+      errors.ifsc = 'IFSC code required hai.';
+    } else if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+      errors.ifsc = 'Invalid IFSC code! Example: SBIN0001234 (11 chars, 5th char 0).';
+    }
+
+    const cleanUpi = upiId.trim();
+    if (cleanUpi && !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(cleanUpi)) {
+      errors.upiId = 'Invalid UPI ID format! Example: 9876543210@paytm';
+    }
+
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   const handleWithdrawalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
+    if (!validateForm()) {
+      setErrorMsg('Kripya form ki sabhi validation errors ko fix karein.');
+      return;
+    }
+
     const val = parseFloat(amount);
-    if (isNaN(val) || val <= 0) {
-      setErrorMsg('Please enter a valid withdrawal amount.');
-      return;
-    }
-
-    if (val > balance) {
-      setErrorMsg(`Insufficient wallet balance. Available: ₹ ${balance.toLocaleString()}`);
-      return;
-    }
-
-    if (!accountHolderName.trim()) {
-      setErrorMsg('Please enter Bank Account Holder Name.');
-      return;
-    }
-
-    if (!accountNo.trim() || !ifsc.trim()) {
-      setErrorMsg('Please enter complete Bank Account Number and IFSC Code.');
-      return;
-    }
-
-    if (accountNo.trim() !== confirmAccountNo.trim()) {
-      setErrorMsg('Account Number and Confirm Account Number do not match!');
-      return;
-    }
-
     setIsSubmitting(true);
     try {
       const res = await apiClient.post('/wallet/withdraw', {
         amount: val,
         accountHolderName: accountHolderName.trim(),
-        bankName,
+        bankName: bankName.trim(),
         accountNo: accountNo.trim(),
         ifscCode: ifsc.trim().toUpperCase(),
         upiId: upiId.trim() || undefined,
@@ -109,7 +156,7 @@ export default function OperatorWallet() {
 
       if (res.data.status === 'success') {
         const reqNo = res.data.data?.reqNo || 'WDR-REQ';
-        setSuccessMsg(`Withdrawal Request "${reqNo}" for ₹ ${val.toLocaleString()} submitted successfully!`);
+        setSuccessMsg(`Withdrawal Request "${reqNo}" for ₹ ${val.toLocaleString('en-IN', { minimumFractionDigits: 2 })} submitted successfully!`);
         setIsModalOpen(false);
         await syncWallet();
         setTimeout(() => setSuccessMsg(''), 5000);
@@ -287,10 +334,20 @@ export default function OperatorWallet() {
                     type="number"
                     placeholder={`Available: ₹ ${balance.toFixed(2)}`}
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono font-bold"
-                    required
+                    onChange={(e) => {
+                      setAmount(e.target.value);
+                      if (fieldErrors.amount) setFieldErrors(prev => ({ ...prev, amount: undefined }));
+                    }}
+                    className={`w-full border rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono font-bold ${
+                      fieldErrors.amount ? 'border-rose-500 bg-rose-50/50' : 'border-slate-300 bg-slate-50'
+                    }`}
                   />
+                  {fieldErrors.amount && (
+                    <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                      <span>{fieldErrors.amount}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -303,11 +360,21 @@ export default function OperatorWallet() {
                       type="text"
                       placeholder="e.g. Ramesh Kumar Verma"
                       value={accountHolderName}
-                      onChange={(e) => setAccountHolderName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                      required
+                      onChange={(e) => {
+                        setAccountHolderName(e.target.value);
+                        if (fieldErrors.accountHolderName) setFieldErrors(prev => ({ ...prev, accountHolderName: undefined }));
+                      }}
+                      className={`w-full border rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 ${
+                        fieldErrors.accountHolderName ? 'border-rose-500 bg-rose-50/50' : 'border-slate-300 bg-slate-50'
+                      }`}
                     />
                   </div>
+                  {fieldErrors.accountHolderName && (
+                    <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                      <span>{fieldErrors.accountHolderName}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -320,11 +387,21 @@ export default function OperatorWallet() {
                       type="text"
                       placeholder="e.g. State Bank of India / HDFC Bank / ICICI Bank"
                       value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                      required
+                      onChange={(e) => {
+                        setBankName(e.target.value);
+                        if (fieldErrors.bankName) setFieldErrors(prev => ({ ...prev, bankName: undefined }));
+                      }}
+                      className={`w-full border rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 ${
+                        fieldErrors.bankName ? 'border-rose-500 bg-rose-50/50' : 'border-slate-300 bg-slate-50'
+                      }`}
                     />
                   </div>
+                  {fieldErrors.bankName && (
+                    <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                      <span>{fieldErrors.bankName}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -338,11 +415,21 @@ export default function OperatorWallet() {
                         type="text"
                         placeholder="e.g. 38192019489"
                         value={accountNo}
-                        onChange={(e) => setAccountNo(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono"
-                        required
+                        onChange={(e) => {
+                          setAccountNo(e.target.value);
+                          if (fieldErrors.accountNo) setFieldErrors(prev => ({ ...prev, accountNo: undefined }));
+                        }}
+                        className={`w-full border rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono ${
+                          fieldErrors.accountNo ? 'border-rose-500 bg-rose-50/50' : 'border-slate-300 bg-slate-50'
+                        }`}
                       />
                     </div>
+                    {fieldErrors.accountNo && (
+                      <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                        <span>{fieldErrors.accountNo}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -355,11 +442,21 @@ export default function OperatorWallet() {
                         type="text"
                         placeholder="Re-enter Account No"
                         value={confirmAccountNo}
-                        onChange={(e) => setConfirmAccountNo(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono"
-                        required
+                        onChange={(e) => {
+                          setConfirmAccountNo(e.target.value);
+                          if (fieldErrors.confirmAccountNo) setFieldErrors(prev => ({ ...prev, confirmAccountNo: undefined }));
+                        }}
+                        className={`w-full border rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono ${
+                          fieldErrors.confirmAccountNo ? 'border-rose-500 bg-rose-50/50' : 'border-slate-300 bg-slate-50'
+                        }`}
                       />
                     </div>
+                    {fieldErrors.confirmAccountNo && (
+                      <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                        <span>{fieldErrors.confirmAccountNo}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -374,11 +471,21 @@ export default function OperatorWallet() {
                         type="text"
                         placeholder="e.g. SBIN0001234"
                         value={ifsc}
-                        onChange={(e) => setIfsc(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono uppercase"
-                        required
+                        onChange={(e) => {
+                          setIfsc(e.target.value.toUpperCase());
+                          if (fieldErrors.ifsc) setFieldErrors(prev => ({ ...prev, ifsc: undefined }));
+                        }}
+                        className={`w-full border rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono uppercase ${
+                          fieldErrors.ifsc ? 'border-rose-500 bg-rose-50/50' : 'border-slate-300 bg-slate-50'
+                        }`}
                       />
                     </div>
+                    {fieldErrors.ifsc && (
+                      <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                        <span>{fieldErrors.ifsc}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -389,9 +496,20 @@ export default function OperatorWallet() {
                       type="text"
                       placeholder="e.g. 9876543210@paytm"
                       value={upiId}
-                      onChange={(e) => setUpiId(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono"
+                      onChange={(e) => {
+                        setUpiId(e.target.value);
+                        if (fieldErrors.upiId) setFieldErrors(prev => ({ ...prev, upiId: undefined }));
+                      }}
+                      className={`w-full border rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono ${
+                        fieldErrors.upiId ? 'border-rose-500 bg-rose-50/50' : 'border-slate-300 bg-slate-50'
+                      }`}
                     />
+                    {fieldErrors.upiId && (
+                      <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0 text-rose-500" />
+                        <span>{fieldErrors.upiId}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 

@@ -60,11 +60,32 @@ export default function AgentServices() {
   const [errorMsg, setErrorMsg] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
+  interface AreaDetail {
+    label: string;
+    price: number;
+  }
+  interface WardDetail {
+    wardNo: string;
+    label: string;
+    price: number;
+  }
+
   // Routing / Location state for Operator assignment
-  const [availableAreas, setAvailableAreas] = useState<{ mode: 'single' | 'area_wise' | 'ward_wise'; areas: string[]; wards: string[]; hasOperators: boolean }>({
+  const [availableAreas, setAvailableAreas] = useState<{
+    mode: 'single' | 'area_wise' | 'ward_wise';
+    areas: string[];
+    wards: string[];
+    areaDetails?: AreaDetail[];
+    wardDetails?: WardDetail[];
+    basePrice?: number;
+    hasOperators: boolean;
+  }>({
     mode: 'single',
     areas: [],
     wards: [],
+    areaDetails: [],
+    wardDetails: [],
+    basePrice: 0,
     hasOperators: true
   });
   const [selectedAreaLabel, setSelectedAreaLabel] = useState('');
@@ -128,9 +149,19 @@ export default function AgentServices() {
   };
 
   // Compute Active Applicable Fee & Dynamic Form Fields
-  const activeFee = selectedService?.hasSubServices
+  let baseFee = selectedService?.hasSubServices
     ? selectedSubService?.fee || 0
     : selectedService?.fee || 0;
+
+  if (availableAreas.mode === 'area_wise' && selectedAreaLabel) {
+    const match = availableAreas.areaDetails?.find(a => a.label === selectedAreaLabel);
+    if (match) baseFee = match.price;
+  } else if (availableAreas.mode === 'ward_wise' && selectedWardNo) {
+    const match = availableAreas.wardDetails?.find(w => w.wardNo === selectedWardNo);
+    if (match) baseFee = match.price;
+  }
+
+  const activeFee = baseFee;
 
   const activeFormFields: FormField[] = selectedService?.hasSubServices
     ? selectedSubService?.formFields || []
@@ -598,11 +629,15 @@ export default function AgentServices() {
                         className="w-full px-3.5 py-2.5 bg-white border border-blue-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         required
                       >
-                        {availableAreas.areas.map((area, idx) => (
-                          <option key={idx} value={area}>
-                            📍 {area}
-                          </option>
-                        ))}
+                        {availableAreas.areas.map((area, idx) => {
+                          const detail = availableAreas.areaDetails?.find(a => a.label === area);
+                          const priceStr = detail ? ` — ₹${detail.price.toFixed(2)}` : '';
+                          return (
+                            <option key={idx} value={area}>
+                              📍 {area}{priceStr}
+                            </option>
+                          );
+                        })}
                       </select>
                     )}
 
@@ -613,11 +648,15 @@ export default function AgentServices() {
                         className="w-full px-3.5 py-2.5 bg-white border border-blue-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         required
                       >
-                        {availableAreas.wards.map((ward, idx) => (
-                          <option key={idx} value={ward}>
-                            🏢 Gwalior Ward #{ward}
-                          </option>
-                        ))}
+                        {availableAreas.wards.map((ward, idx) => {
+                          const detail = availableAreas.wardDetails?.find(w => w.wardNo === ward);
+                          const priceStr = detail ? ` — ₹${detail.price.toFixed(2)}` : '';
+                          return (
+                            <option key={idx} value={ward}>
+                              🏢 Gwalior Ward #{ward}{priceStr}
+                            </option>
+                          );
+                        })}
                       </select>
                     )}
                   </div>

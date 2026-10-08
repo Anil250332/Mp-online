@@ -408,8 +408,13 @@ export const updateService = async (req, res) => {
       ]
     );
 
-    // Delete old sub-services and re-insert fresh ones
-    await connection.query('DELETE FROM sub_services WHERE service_id = ?', [id]);
+    // Fetch existing sub-services to sync safely without foreign key conflicts
+    const [existingSubRows] = await connection.query(
+      'SELECT id FROM sub_services WHERE service_id = ?',
+      [id]
+    );
+    const existingSubIds = existingSubRows.map(r => Number(r.id));
+    const processedSubIds = [];
 
     if (hasSubServices && Array.isArray(subServices) && subServices.length > 0) {
       for (let i = 0; i < subServices.length; i++) {
@@ -421,56 +426,143 @@ export const updateService = async (req, res) => {
         const subFormSchema = Array.isArray(sub.formFields) ? JSON.stringify(sub.formFields) : JSON.stringify([]);
         const adminProfit = (subFee * subComm) / 100;
         const operatorShare = subFee - adminProfit;
+        const mode = sub.operatorAssignmentMode || operatorAssignmentMode || 'single';
 
-        // Insert sub-service with temporary code
-        const [subResult] = await connection.query(
+        const subIdNum = Number(sub.id);
+        if (subIdNum && existingSubIds.includes(subIdNum)) {
+          // UPDATE existing sub-service preserving ID & foreign key references
+          const subCode = `SRV-${id}-${subIdNum}`;
+          await connection.query(
+            `UPDATE sub_services SET
+              name = ?,
+              code = ?,
+              icon_url = ?,
+              fee = ?,
+              agent_fee = ?,
+              operator_share = ?,
+              admin_profit = ?,
+              admin_commission_percentage = ?,
+              form_schema = ?,
+              operator_assignment_mode = ?,
+              is_active = true
+            WHERE id = ? AND service_id = ?`,
+            [
+              sub.name.trim(),
+              subCode,
+              sub.iconUrl || '',
+              subFee,
+              subFee,
+              operatorShare,
+              adminProfit,
+              subComm,
+              subFormSchema,
+              mode,
+              subIdNum,
+              id
+            ]
+          );
+          processedSubIds.push(subIdNum);
+        } else {
+          // INSERT new sub-service
+          const [subResult] = await connection.query(
+            `INSERT INTO sub_services (
+              service_id, name, code, icon_url, fee, agent_fee, operator_share, distributor_share, admin_profit, admin_commission_percentage, form_schema, required_docs, operator_assignment_mode, created_by, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, 1, true)`,
+            [
+              id,
+              sub.name.trim(),
+              'TEMP',
+              sub.iconUrl || '',
+              subFee,
+              subFee,
+              operatorShare,
+              adminProfit,
+              subComm,
+              subFormSchema,
+              mode
+            ]
+          );
+
+          const subId = subResult.insertId;
+          const subCode = `SRV-${id}-${subId}`;
+          await connection.query('UPDATE sub_services SET code = ? WHERE id = ?', [subCode, subId]);
+          processedSubIds.push(subId);
+        }
+      }
+
+      // Deactivate or delete sub-services no longer present in payload
+      const subIdsToDelete = existingSubIds.filter(sId => !processedSubIds.includes(sId));
+      for (const delId of subIdsToDelete) {
+        try {
+          await connection.query('DELETE FROM sub_services WHERE id = ?', [delId]);
+        } catch (e) {
+          // Soft-delete if referenced by historical applications
+          await connection.query('UPDATE sub_services SET is_active = false WHERE id = ?', [delId]);
+        }
+      }
+    } else {
+      // Direct Service: Update existing default sub_service or insert one
+      const adminProfit = (parsedFee * parsedComm) / 100;
+      const operatorShare = parsedFee - adminProfit;
+      const serviceCode = `SRV-${id}`;
+
+      if (existingSubIds.length > 0) {
+        const defaultSubId = existingSubIds[0];
+        await connection.query(
+          `UPDATE sub_services SET
+            name = ?,
+            code = ?,
+            icon_url = ?,
+            fee = ?,
+            agent_fee = ?,
+            operator_share = ?,
+            admin_profit = ?,
+            admin_commission_percentage = ?,
+            form_schema = ?,
+            operator_assignment_mode = ?,
+            is_active = true
+          WHERE id = ?`,
+          [
+            name.trim(),
+            serviceCode,
+            iconUrl || '',
+            parsedFee,
+            parsedFee,
+            operatorShare,
+            adminProfit,
+            parsedComm,
+            formSchemaJson,
+            operatorAssignmentMode || 'single',
+            defaultSubId
+          ]
+        );
+        for (let k = 1; k < existingSubIds.length; k++) {
+          try {
+            await connection.query('DELETE FROM sub_services WHERE id = ?', [existingSubIds[k]]);
+          } catch (e) {
+            await connection.query('UPDATE sub_services SET is_active = false WHERE id = ?', [existingSubIds[k]]);
+          }
+        }
+      } else {
+        await connection.query(
           `INSERT INTO sub_services (
             service_id, name, code, icon_url, fee, agent_fee, operator_share, distributor_share, admin_profit, admin_commission_percentage, form_schema, required_docs, operator_assignment_mode, created_by, is_active
           ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, 1, true)`,
           [
             id,
-            sub.name.trim(),
-            'TEMP',
-            sub.iconUrl || '',
-            subFee,
-            subFee,
+            name.trim(),
+            serviceCode,
+            iconUrl || '',
+            parsedFee,
+            parsedFee,
             operatorShare,
             adminProfit,
-            subComm,
-            subFormSchema,
-            sub.operatorAssignmentMode || operatorAssignmentMode || 'single'
+            parsedComm,
+            formSchemaJson,
+            operatorAssignmentMode || 'single'
           ]
         );
-
-        const subId = subResult.insertId;
-        const subCode = `SRV-${id}-${subId}`;
-
-        // Update sub-service code to SRV-{serviceId}-{subId}
-        await connection.query('UPDATE sub_services SET code = ? WHERE id = ?', [subCode, subId]);
       }
-    } else {
-      // Direct Service: Create default sub_service entry matching parent service
-      const adminProfit = (parsedFee * parsedComm) / 100;
-      const operatorShare = parsedFee - adminProfit;
-      const serviceCode = `SRV-${id}`;
-      await connection.query(
-        `INSERT INTO sub_services (
-          service_id, name, code, icon_url, fee, agent_fee, operator_share, distributor_share, admin_profit, admin_commission_percentage, form_schema, required_docs, operator_assignment_mode, created_by, is_active
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, 1, true)`,
-        [
-          id,
-          name.trim(),
-          serviceCode,
-          iconUrl || '',
-          parsedFee,
-          parsedFee,
-          operatorShare,
-          adminProfit,
-          parsedComm,
-          formSchemaJson,
-          operatorAssignmentMode || 'single'
-        ]
-      );
     }
 
     await connection.commit();

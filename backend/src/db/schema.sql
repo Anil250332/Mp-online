@@ -1,8 +1,5 @@
 -- V2Online Portal MySQL Database Schema Initialization
 
-CREATE DATABASE IF NOT EXISTS v2online_portal CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE v2online_portal;
-
 -- 1. Users Table (Multi-role RBAC)
 CREATE TABLE IF NOT EXISTS users (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -105,7 +102,7 @@ CREATE TABLE IF NOT EXISTS applications (
     tehsil VARCHAR(100) NULL,
     ward_no VARCHAR(50) NULL,
     form_data JSON NOT NULL,
-    status ENUM('pending', 'assigned', 'processing', 'correction_required', 'completed', 'rejected') DEFAULT 'processing',
+    status ENUM('pending', 'assigned', 'processing', 'correction_required', 'completed', 'verified', 'rejected') DEFAULT 'pending',
     rejection_reason TEXT NULL,
     correction_remarks TEXT NULL,
     govt_ack_no VARCHAR(100) NULL,
@@ -250,4 +247,27 @@ CREATE TABLE IF NOT EXISTS shops (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (distributor_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- 14. Operator Price Update Requests Table
+CREATE TABLE IF NOT EXISTS operator_price_requests (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    request_no VARCHAR(50) UNIQUE NOT NULL,
+    operator_id BIGINT NOT NULL,
+    sub_service_id INT NOT NULL,
+    assignment_id BIGINT NULL,
+    routing_mode ENUM('single', 'area_wise', 'ward_wise') DEFAULT 'single',
+    area_or_ward_label VARCHAR(150) NULL,
+    current_price DECIMAL(10,2) NOT NULL,
+    requested_price DECIMAL(10,2) NOT NULL,
+    reason TEXT NULL,
+    status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+    admin_remarks TEXT NULL,
+    reviewed_by BIGINT NULL,
+    reviewed_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (sub_service_id) REFERENCES sub_services(id) ON DELETE CASCADE,
+    FOREIGN KEY (assignment_id) REFERENCES operator_assignments(id) ON DELETE SET NULL,
+    FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
 );

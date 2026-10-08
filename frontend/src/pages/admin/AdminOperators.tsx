@@ -572,28 +572,16 @@ export default function AdminOperators() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Office Name *</label>
-                  <input
-                    type="text"
-                    required
-                    value={form.officeName}
-                    onChange={(e) => setForm(prev => ({ ...prev, officeName: e.target.value }))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                    placeholder="Office / Department Name"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Ward Number</label>
-                  <input
-                    type="text"
-                    value={form.wardNo}
-                    onChange={(e) => setForm(prev => ({ ...prev, wardNo: e.target.value }))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                    placeholder="Ward No."
-                  />
-                </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Office Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={form.officeName}
+                  onChange={(e) => setForm(prev => ({ ...prev, officeName: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                  placeholder="Office / Department Name"
+                />
               </div>
 
               <div>

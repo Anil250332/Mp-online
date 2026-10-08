@@ -14,8 +14,8 @@ const router = express.Router();
 router.get('/areas', authenticateToken, getAvailableAreas);
 router.get('/find-operator', authenticateToken, findOperator);
 
-// Operator Assignment CRUD (Protected: Admin & Manager)
-router.get('/', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager'), getAssignments);
+// Operator Assignment CRUD (Protected: Admin, Manager & Operator)
+router.get('/', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager', 'operator'), getAssignments);
 router.post('/', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager'), createAssignment);
 router.delete('/:id', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager'), deleteAssignment);
 

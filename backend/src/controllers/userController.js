@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import pool from '../config/db.js';
+import { sendUserCreatedEmail, sendUserApprovalEmail, sendDistributorUserAddedAlertToAdmin } from '../utils/mailer.js';
 
 /**
  * 1. Get Users List (Filter by role)
@@ -124,10 +125,29 @@ export const createUser = async (req, res) => {
 
     const newUserId = result.insertId;
 
-    // Create wallet for new user
-    await connection.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [newUserId]);
-
     await connection.commit();
+
+    // 1. Send Welcome Email to newly created user
+    if (email) {
+      sendUserCreatedEmail({
+        toEmail: email,
+        name: fullName,
+        role,
+        mobile: mobile.trim(),
+        tempPassword: password,
+        createdByRole: req.user?.role || 'Admin'
+      }).catch(err => console.error('Create user email error:', err.message));
+    }
+
+    // 2. If created by Distributor, notify Admin
+    if (req.user?.role === 'distributor') {
+      sendDistributorUserAddedAlertToAdmin({
+        distributorName: req.user.full_name || 'Distributor',
+        newUserName: fullName,
+        newUserRole: role,
+        newUserMobile: mobile.trim()
+      }).catch(err => console.error('Distributor user creation admin alert error:', err.message));
+    }
 
     const roleLabels = {
       distributor: 'Distributor',
@@ -220,21 +240,57 @@ export const toggleUserStatus = async (req, res) => {
  * PATCH /api/users/:id/approve
  */
 export const approveUser = async (req, res) => {
+  const connection = await pool.getConnection();
   try {
     const { id } = req.params;
+    await connection.beginTransaction();
 
-    await pool.query(
-      'UPDATE users SET approval_status = "approved", is_active = true WHERE id = ?',
-      [id]
-    );
+    const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
+    if (users.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'User not found.' });
+    }
+
+    try {
+      await connection.query(
+        'UPDATE users SET approval_status = ?, is_active = true WHERE id = ?',
+        ['approved', id]
+      );
+    } catch (err) {
+      await connection.query(
+        'UPDATE users SET is_active = true WHERE id = ?',
+        [id]
+      );
+    }
+
+    try {
+      await connection.query(
+        'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
+        ['active', id, id]
+      );
+    } catch (e) {}
+
+    await connection.commit();
+
+    if (users[0].email) {
+      sendUserApprovalEmail({
+        toEmail: users[0].email,
+        name: users[0].full_name,
+        role: users[0].role || 'operator',
+        status: 'approved'
+      }).catch(err => console.error('Approval email error:', err.message));
+    }
 
     return res.status(200).json({
       status: 'success',
       message: 'User approved and activated successfully!'
     });
   } catch (error) {
+    await connection.rollback();
     console.error('Approve User Error:', error);
     return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
   }
 };
 
@@ -243,21 +299,57 @@ export const approveUser = async (req, res) => {
  * PATCH /api/users/:id/reject
  */
 export const rejectUser = async (req, res) => {
+  const connection = await pool.getConnection();
   try {
     const { id } = req.params;
+    await connection.beginTransaction();
 
-    await pool.query(
-      'UPDATE users SET approval_status = "rejected", is_active = false WHERE id = ?',
-      [id]
-    );
+    const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
+    if (users.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'User not found.' });
+    }
+
+    try {
+      await connection.query(
+        'UPDATE users SET approval_status = ?, is_active = false WHERE id = ?',
+        ['rejected', id]
+      );
+    } catch (err) {
+      await connection.query(
+        'UPDATE users SET is_active = false WHERE id = ?',
+        [id]
+      );
+    }
+
+    try {
+      await connection.query(
+        'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
+        ['rejected', id, id]
+      );
+    } catch (e) {}
+
+    await connection.commit();
+
+    if (users[0].email) {
+      sendUserApprovalEmail({
+        toEmail: users[0].email,
+        name: users[0].full_name,
+        role: users[0].role || 'operator',
+        status: 'rejected'
+      }).catch(err => console.error('Rejection email error:', err.message));
+    }
 
     return res.status(200).json({
       status: 'success',
       message: 'User registration request rejected.'
     });
   } catch (error) {
+    await connection.rollback();
     console.error('Reject User Error:', error);
     return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
   }
 };
 

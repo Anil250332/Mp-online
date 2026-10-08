@@ -9,7 +9,7 @@ export interface WalletTransaction {
   openingBalance: number;
   closingBalance: number;
   remarks: string;
-  appId?: string; // Application / Task ID (e.g., TSK-2026-8004 or APP-2026-1001)
+  appId?: string; // Application ID (e.g., APP-2026-1001)
   status: 'SUCCESS' | 'PENDING' | 'FAILED';
   userName?: string;
   shopName?: string;
@@ -56,7 +56,7 @@ class WalletStoreService {
           this.transactions = response.data.data.map((t: any) => {
             let extractedAppId = t.appId || t.app_id || null;
             if (!extractedAppId && t.remarks) {
-              const match = t.remarks.match(/\[(?:App|Task)\s*ID:\s*([^\]]+)\]/i) || t.remarks.match(/(TSK-\d{4}-\d{4})/i);
+              const match = t.remarks.match(/\[(?:App|Application|Task)\s*ID:\s*([^\]]+)\]/i) || t.remarks.match(/(APP-\d{4}-\d{4})/i);
               if (match) extractedAppId = match[1];
             }
             return {

@@ -17,7 +17,8 @@ import {
   ArrowLeft,
   XCircle,
   RotateCcw,
-  RefreshCw
+  RefreshCw,
+  User
 } from 'lucide-react';
 
 interface ApplicationDoc {
@@ -39,6 +40,12 @@ interface ApplicationItem {
   status: 'pending' | 'assigned' | 'processing' | 'completed' | 'verified' | 'rejected';
   govtAckNo?: string;
   rejectionReason?: string;
+  customerName?: string;
+  customerMobile?: string;
+  district?: string;
+  tehsil?: string;
+  wardNo?: string;
+  formData?: string | Record<string, any>;
   createdAt: string;
   completedAt?: string;
   shopName?: string;
@@ -89,16 +96,102 @@ export default function AgentServiceRequests() {
     document.body.removeChild(a);
   };
 
+  const parsedFormData = (data?: string | Record<string, any>): Record<string, any> => {
+    if (!data) return {};
+    if (typeof data === 'object') return data;
+    try {
+      return JSON.parse(data);
+    } catch {
+      return {};
+    }
+  };
+
+  const getOperatorNote = (data?: string | { note?: string; files?: ApplicationDoc[] }): string => {
+    if (!data) return '';
+    if (typeof data === 'object') return data.note || '';
+    try {
+      const parsed = JSON.parse(data);
+      return parsed.note || '';
+    } catch {
+      return String(data);
+    }
+  };
+
+  const getParsedCompletionOutput = (data?: string | object) => {
+    if (!data) return null;
+    if (typeof data === 'object') return data as { note?: string; files?: any[] };
+    try {
+      return JSON.parse(data) as { note?: string; files?: any[] };
+    } catch {
+      return null;
+    }
+  };
+
+  const getDocumentCategories = (documents?: ApplicationDoc[], completionOutputData?: string | object) => {
+    if (!Array.isArray(documents) || documents.length === 0) {
+      return { clientDocs: [], operatorDocs: [] };
+    }
+
+    const compOutput = getParsedCompletionOutput(completionOutputData);
+    const outputFiles = Array.isArray(compOutput?.files) ? compOutput.files : [];
+
+    const operatorDocs: ApplicationDoc[] = [];
+    const clientDocs: ApplicationDoc[] = [];
+
+    documents.forEach((doc) => {
+      const labelLower = (doc.label || '').toLowerCase();
+      const matchesOutputFile = outputFiles.some((of: any) => {
+        const matchPath = of.filePath && doc.filePath && of.filePath === doc.filePath;
+        const matchLabel = of.label && doc.label && of.label.toLowerCase() === doc.label.toLowerCase();
+        return matchPath || matchLabel;
+      });
+
+      const isOperatorLabel =
+        labelLower === 'response' ||
+        labelLower.includes('deliverable') ||
+        labelLower.includes('output certificate') ||
+        labelLower.startsWith('deliverable_');
+
+      if (matchesOutputFile || isOperatorLabel) {
+        operatorDocs.push(doc);
+      } else {
+        clientDocs.push(doc);
+      }
+    });
+
+    if (operatorDocs.length === 0 && outputFiles.length > 0) {
+      outputFiles.forEach((f: any) => {
+        operatorDocs.push({
+          label: f.label || 'Operator Output File',
+          fileName: f.fileName,
+          filePath: f.filePath,
+          mimeType: f.mimeType || 'application/pdf'
+        });
+      });
+    }
+
+    return { clientDocs, operatorDocs };
+  };
+
+  const isApplicantFormField = (label: string, value: any): boolean => {
+    const strVal = String(value || '');
+    const labelLower = label.toLowerCase();
+    if (strVal.includes('Uploaded Document')) return false;
+    if (strVal.includes('Pending Operator File Upload')) return false;
+    if (labelLower.startsWith('[operator') || labelLower.includes('operator deliverable')) return false;
+    return true;
+  };
+
   const filteredApps = applications.filter(app => {
     const s = (app.status || '').toLowerCase();
     const matchesTab =
       activeTab === 'ALL'
         ? true
         : activeTab === 'PENDING'
-        ? s === 'pending' || s === 'assigned' || s === 'processing'
-        : activeTab === 'COMPLETED'
-        ? s === 'completed' || s === 'verified'
-        : s === 'rejected';
+          ? ['pending', 'assigned', 'processing'].includes(s)
+          : activeTab === 'COMPLETED'
+            ? ['completed', 'verified'].includes(s)
+            : s === 'rejected';
 
     const matchesSearch =
       app.applicationNo?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -118,7 +211,7 @@ export default function AgentServiceRequests() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
-        
+
         {/* Top Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
@@ -153,13 +246,12 @@ export default function AgentServiceRequests() {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 min-w-[100px] py-2 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
-                activeTab === tab
+              className={`flex-1 min-w-[100px] py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${activeTab === tab
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100'
-              }`}
+                }`}
             >
-              {tab === 'ALL' ? 'All Requests' : tab} ({getTabCount(tab)})
+              {tab === 'ALL' ? 'All Requests' : tab === 'PENDING' ? 'In Progress' : tab === 'COMPLETED' ? 'Completed & Verified' : tab} ({getTabCount(tab)})
             </button>
           ))}
         </div>
@@ -196,8 +288,8 @@ export default function AgentServiceRequests() {
                   <th className="py-3.5 px-4">Application No & Service</th>
                   <th className="py-3.5 px-4">Fee Deducted</th>
                   <th className="py-3.5 px-4">Applied Date</th>
-                  <th className="py-3.5 px-4 text-center">Status</th>
-                  <th className="py-3.5 px-4 text-center">Govt Ack / Deliverable</th>
+                  <th className="py-3.5 px-4 text-center">Operator Status</th>
+                  <th className="py-3.5 px-4 text-center">Admin Approval Status</th>
                   <th className="py-3.5 px-4 text-right">Action</th>
                 </tr>
               </thead>
@@ -211,6 +303,8 @@ export default function AgentServiceRequests() {
                 ) : (
                   filteredApps.map((app) => {
                     const isRej = app.status === 'rejected';
+                    const isVerified = app.status === 'verified';
+                    const isCompleted = app.status === 'completed';
 
                     return (
                       <tr key={app.id} className="hover:bg-slate-50/80 transition-colors">
@@ -236,44 +330,62 @@ export default function AgentServiceRequests() {
                         </td>
 
                         <td className="py-3.5 px-4 text-center">
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                            app.status === 'verified'
-                              ? 'bg-blue-50 text-blue-700 border-blue-200'
-                              : app.status === 'completed'
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                              : isRej
-                              ? 'bg-red-50 text-red-700 border-red-200'
-                              : 'bg-amber-50 text-amber-700 border-amber-200'
-                          }`}>
-                            {app.status === 'verified' ? (
-                              <ShieldCheck className="h-3 w-3 text-blue-600" />
-                            ) : app.status === 'completed' ? (
-                              <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                            ) : isRej ? (
-                              <XCircle className="h-3 w-3 text-red-600" />
-                            ) : (
-                              <Clock className="h-3 w-3 text-amber-600" />
-                            )}
-                            {app.status?.toUpperCase()}
-                          </span>
+                          {isCompleted || isVerified ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-300">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                              <span>COMPLETED</span>
+                            </span>
+                          ) : app.status === 'processing' ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-blue-800 bg-blue-50 px-3 py-1 rounded-full border border-blue-300">
+                              <Clock className="h-3.5 w-3.5 text-blue-600" />
+                              <span>IN PROGRESS</span>
+                            </span>
+                          ) : app.status === 'assigned' ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-indigo-800 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-300">
+                              <User className="h-3.5 w-3.5 text-indigo-600" />
+                              <span>ASSIGNED</span>
+                            </span>
+                          ) : isRej ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-red-800 bg-red-50 px-3 py-1 rounded-full border border-red-300">
+                              <XCircle className="h-3.5 w-3.5 text-red-600" />
+                              <span>REJECTED</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-amber-800 bg-amber-50 px-3 py-1 rounded-full border border-amber-300">
+                              <Clock className="h-3.5 w-3.5 text-amber-600" />
+                              <span>PENDING ASSIGNMENT</span>
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3.5 px-4 text-center">
-                          {isRej ? (
-                            <div className="bg-red-50/90 p-2 rounded-xl border border-red-200 text-left max-w-xs mx-auto">
-                              <span className="text-[10px] font-bold text-red-800 uppercase block">Rejection Reason:</span>
-                              <span className="text-xs text-red-900 font-semibold break-words">
-                                {app.rejectionReason || 'Application rejected.'}
+                          {isVerified ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-300 shadow-2xs">
+                              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                              <span>APPROVED & VERIFIED</span>
+                            </span>
+                          ) : isCompleted ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-amber-800 bg-amber-50 px-3 py-1 rounded-full border border-amber-300 shadow-2xs">
+                              <Clock className="h-3.5 w-3.5 text-amber-600" />
+                              <span>AWAITING ADMIN APPROVAL</span>
+                            </span>
+                          ) : isRej ? (
+                            <div className="bg-red-50 p-2 rounded-xl border border-red-200 text-left max-w-xs mx-auto">
+                              <span className="inline-flex items-center gap-1 font-bold text-xs text-red-700 uppercase block mb-0.5">
+                                <XCircle className="h-3.5 w-3.5 text-red-600" />
+                                REJECTED BY ADMIN
                               </span>
-                            </div>
-                          ) : app.govtAckNo ? (
-                            <div className="space-y-0.5">
-                              <span className="font-mono text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block">
-                                Ref: {app.govtAckNo}
-                              </span>
+                              {app.rejectionReason && (
+                                <span className="text-xs text-red-900 font-medium break-words block">
+                                  {app.rejectionReason}
+                                </span>
+                              )}
                             </div>
                           ) : (
-                            <span className="text-xs text-slate-400 italic font-medium">Processing request...</span>
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-slate-700 bg-slate-100 px-3 py-1 rounded-full border border-slate-300">
+                              <Clock className="h-3.5 w-3.5 text-slate-500" />
+                              <span>In Progress</span>
+                            </span>
                           )}
                         </td>
 
@@ -307,81 +419,190 @@ export default function AgentServiceRequests() {
 
         {/* View Response Modal */}
         {selectedApp && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95 my-auto">
-              
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2 text-slate-900 font-bold text-base">
-                  <FileText className="h-5 w-5 text-blue-600" />
-                  <span>Application Details & Documents</span>
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 z-50 overflow-hidden">
+            <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-100 relative overflow-hidden my-auto animate-in fade-in zoom-in-95">
+
+              {/* Modal Header */}
+              <div className="px-6 py-4 bg-white border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-50 border border-blue-200/60 rounded-xl text-blue-600">
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-base">
+                      Application Details & Documents
+                    </h3>
+                    <p className="text-xs text-slate-500 font-mono font-medium">#{selectedApp.applicationNo}</p>
+                  </div>
                 </div>
+
                 <button
                   onClick={() => setSelectedApp(null)}
-                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                  className="text-slate-400 hover:text-slate-700 p-2 rounded-xl cursor-pointer transition-colors"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3 text-xs">
-                <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-                  <span className="text-slate-500">Application Number:</span>
-                  <span className="font-mono font-bold text-blue-700 text-sm">{selectedApp.applicationNo}</span>
-                </div>
+              {/* Scrollable Content Body */}
+              <div className="p-5 sm:p-6 overflow-y-auto space-y-4 flex-1 text-xs">
 
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Service:</span>
-                  <span className="font-bold text-slate-900">{selectedApp.serviceName}</span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Status:</span>
-                  <span className="font-bold uppercase text-slate-900">{selectedApp.status}</span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Fee Deducted:</span>
-                  <span className="font-mono font-bold text-slate-900">₹ {Number(selectedApp.feeDeducted || 0).toFixed(2)}</span>
-                </div>
-
-                {selectedApp.govtAckNo && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Govt Ack / Ref No:</span>
-                    <span className="font-mono font-bold text-emerald-700">{selectedApp.govtAckNo}</span>
+                {/* Primary Overview Card */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80 space-y-2.5">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                    <span className="text-slate-500 font-medium">Application Number:</span>
+                    <span className="font-mono font-bold text-blue-700 text-sm">{selectedApp.applicationNo}</span>
                   </div>
-                )}
 
-                {/* Uploaded Documents List */}
-                {selectedApp.documents && selectedApp.documents.length > 0 && (
-                  <div className="pt-2 border-t border-slate-200 space-y-2">
-                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                      📁 Attached Documents ({selectedApp.documents.length})
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Service:</span>
+                    <span className="font-bold text-slate-900 text-right">{selectedApp.serviceName}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Status:</span>
+                    <span className={`font-bold text-xs uppercase px-2.5 py-0.5 rounded-full border ${selectedApp.status === 'verified' ? 'bg-emerald-50 text-emerald-700 border-emerald-300' :
+                        selectedApp.status === 'completed' ? 'bg-amber-50 text-amber-700 border-amber-300' :
+                          selectedApp.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-300' :
+                            'bg-slate-100 text-slate-700 border-slate-300'
+                      }`}>
+                      {selectedApp.status}
                     </span>
-                    <div className="space-y-1.5">
-                      {selectedApp.documents.map((doc, idx) => (
-                        <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                          <div>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase block">{doc.label}</span>
-                            <span className="font-mono text-xs font-semibold text-slate-800">{doc.fileName}</span>
-                          </div>
-                          <button
-                            onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
-                            className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer"
-                          >
-                            <Download className="h-3 w-3" />
-                            <span>Download</span>
-                          </button>
-                        </div>
-                      ))}
-                    </div>
                   </div>
-                )}
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Fee Deducted:</span>
+                    <span className="font-mono font-bold text-slate-900 text-sm">₹ {Number(selectedApp.feeDeducted || 0).toFixed(2)}</span>
+                  </div>
+
+                  {selectedApp.govtAckNo && (
+                    <div className="flex justify-between items-center bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                      <span className="text-emerald-800 font-bold">Govt Ack / Ref No:</span>
+                      <span className="font-mono font-bold text-emerald-900 text-xs sm:text-sm">{selectedApp.govtAckNo}</span>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* Operator Work Remarks & Output Deliverables */}
+              
+
+                {/* Client / Customer Form Information Section */}
+                {(() => {
+                  const { clientDocs } = getDocumentCategories(selectedApp.documents, selectedApp.completionOutputData);
+                  const validFormEntries = Object.entries(parsedFormData(selectedApp.formData)).filter(([k, v]) => isApplicantFormField(k, v));
+
+                  return (
+                    <div className="space-y-3 pt-2">
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <User className="h-4 w-4 text-blue-600" />
+                        <span>Client / Customer Form Information</span>
+                      </h4>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      
+                        {selectedApp.district && (
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 col-span-1 sm:col-span-2">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">District / Area</span>
+                            <span className="font-semibold text-slate-900">
+                              {selectedApp.district} {selectedApp.tehsil ? `• ${selectedApp.tehsil}` : ''} {selectedApp.wardNo ? `• Ward ${selectedApp.wardNo}` : ''}
+                            </span>
+                          </div>
+                        )}
+
+                        {validFormEntries.map(([label, value]) => {
+                          const cleanLabel = label.replace(/^\[.*?\]:\s*/, '');
+                          return (
+                            <div key={label} className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase block">{cleanLabel}</span>
+                              <span className="font-semibold text-slate-900 break-words">{String(value)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Uploaded Client Proof Documents */}
+                      {clientDocs.length > 0 && (
+                        <div className="space-y-2.5 pt-3 border-t border-slate-200">
+                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                            📁 Attached Client Proof Documents ({clientDocs.length})
+                          </h4>
+                          <div className="space-y-2">
+                            {clientDocs.map((doc, idx) => (
+                              <div key={idx} className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 flex items-center justify-between gap-2">
+                                <div className="overflow-hidden">
+                                  <span className="text-[10px] font-bold text-slate-500 uppercase block">{doc.label}</span>
+                                  <span className="font-mono text-xs font-bold text-slate-800 truncate block">{doc.fileName}</span>
+                                </div>
+                                <button
+                                  onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                                  className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                  <span>Download</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                  {(() => {
+                  const { operatorDocs } = getDocumentCategories(selectedApp.documents, selectedApp.completionOutputData);
+                  const opNote = getOperatorNote(selectedApp.completionOutputData);
+                  if (!opNote && operatorDocs.length === 0) return null;
+
+                  return (
+                    <div className="bg-teal-50/80 p-4 rounded-2xl border border-teal-200/80 space-y-3">
+                      <span className="text-xs font-bold text-teal-900 uppercase tracking-wider block flex items-center gap-1.5">
+                        <FileText className="h-4 w-4 text-teal-600" />
+                        <span>Operator Work Completion & Deliverables</span>
+                      </span>
+
+                      {opNote && (
+                        <div>
+                          <span className="text-[10px] font-bold text-teal-700 uppercase block mb-1">Operator Remarks / Note</span>
+                          <p className="text-slate-800 font-medium italic bg-white p-3 rounded-xl border border-teal-200/60">
+                            "{opNote}"
+                          </p>
+                        </div>
+                      )}
+
+                      {operatorDocs.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-bold text-teal-800 uppercase block">
+                            📄 Output Certificate / Deliverable Files ({operatorDocs.length})
+                          </span>
+                          {operatorDocs.map((doc, idx) => (
+                            <div key={idx} className="bg-white p-3 rounded-xl border border-teal-200/80 flex items-center justify-between gap-2">
+                              <div className="overflow-hidden">
+                                <span className="text-[10px] font-bold text-teal-700 uppercase block">{doc.label}</span>
+                                <span className="font-mono text-xs font-bold text-slate-900 truncate block">{doc.fileName}</span>
+                              </div>
+                              <button
+                                onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors shadow-xs"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                <span>Download Deliverable</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
               </div>
 
-              <div className="pt-2 flex items-center justify-between gap-3">
+              {/* Modal Footer */}
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between gap-3 shrink-0">
                 <button
                   onClick={() => window.print()}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-100 flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-bold hover:bg-white flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
                   <Printer className="h-4 w-4" />
                   <span>Print Receipt</span>
@@ -389,7 +610,7 @@ export default function AgentServiceRequests() {
 
                 <button
                   onClick={() => setSelectedApp(null)}
-                  className="px-5 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer"
+                  className="px-5 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer shadow-md transition-colors"
                 >
                   Close
                 </button>

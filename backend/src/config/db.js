@@ -11,12 +11,15 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const sslConfig = process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined;
+
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '3306', 10),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'v2online_portal',
+  ssl: sslConfig,
   waitForConnections: true,
   connectionLimit: 15,
   queueLimit: 0,
@@ -29,22 +32,28 @@ const dbConfig = {
 export const pool = mysql.createPool(dbConfig);
 
 /**
- * Auto-initialize database, schema & default seed on XAMPP MySQL
+ * Auto-initialize database, schema & default seed on MySQL Database
  */
 export const initDb = async () => {
   try {
-    // 1. Check/Create Database on XAMPP server
+    // 1. Check/Connect Database on MySQL server
     const rawConn = await mysql.createConnection({
       host: dbConfig.host,
       port: dbConfig.port,
       user: dbConfig.user,
       password: dbConfig.password,
+      database: dbConfig.database,
+      ssl: sslConfig,
       multipleStatements: true
     });
 
-    await rawConn.query(
-      `CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
-    );
+    try {
+      await rawConn.query(
+        `CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
+      );
+    } catch (e) {
+      // Ignore if cloud DB user does not have global CREATE DATABASE privilege
+    }
 
     // 2. Execute schema.sql if tables don't exist
     const schemaPath = path.join(__dirname, '../db/schema.sql');
@@ -87,6 +96,30 @@ export const initDb = async () => {
     } catch (e) {
       // Ignore if already correct
     }
+
+    // Ensure approval_status column exists in users table
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE users ADD COLUMN approval_status ENUM('pending', 'approved', 'rejected') DEFAULT 'approved';
+      `);
+    } catch (e) {}
+
+    // Ensure applications table status column includes 'verified'
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE applications MODIFY COLUMN status ENUM('pending', 'assigned', 'processing', 'correction_required', 'completed', 'verified', 'rejected') DEFAULT 'pending';
+      `);
+    } catch (e) {}
+
+    // Fix any invalid/empty status rows resulting from past truncation
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        UPDATE applications SET status = 'verified' WHERE status = '' OR status IS NULL OR status = '0';
+      `);
+    } catch (e) {}
 
     // Ensure services table has necessary columns for dynamic forms & sub-services
     try {
@@ -167,70 +200,132 @@ export const initDb = async () => {
       `);
     } catch (e) {}
 
+    // Custom fee column for operator_assignments (custom approved price for area/ward)
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE operator_assignments ADD COLUMN custom_fee DECIMAL(10,2) NULL;
+      `);
+    } catch (e) {}
+
+    // Ensure operator_price_requests table exists
+    await rawConn.query(`
+      USE \`${dbConfig.database}\`;
+      CREATE TABLE IF NOT EXISTS operator_price_requests (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        request_no VARCHAR(50) UNIQUE NOT NULL,
+        operator_id BIGINT NOT NULL,
+        sub_service_id INT NOT NULL,
+        assignment_id BIGINT NULL,
+        routing_mode ENUM('single', 'area_wise', 'ward_wise') DEFAULT 'single',
+        area_or_ward_label VARCHAR(150) NULL,
+        current_price DECIMAL(10,2) NOT NULL,
+        requested_price DECIMAL(10,2) NOT NULL,
+        reason TEXT NULL,
+        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        admin_remarks TEXT NULL,
+        reviewed_by BIGINT NULL,
+        reviewed_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (sub_service_id) REFERENCES sub_services(id) ON DELETE CASCADE,
+        FOREIGN KEY (assignment_id) REFERENCES operator_assignments(id) ON DELETE SET NULL,
+        FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+
     await rawConn.end();
 
-    // 3. Check and Seed Super Admin
-    const [adminRows] = await pool.query("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1");
+    // Auto-sync approved custom_fees from operator_assignments to sub_services and services
+    try {
+      await pool.query(`
+        UPDATE sub_services ss
+        JOIN operator_assignments oa ON ss.id = oa.sub_service_id
+        SET ss.fee = oa.custom_fee
+        WHERE oa.custom_fee IS NOT NULL AND oa.custom_fee > 0;
+      `);
+      await pool.query(`
+        UPDATE services s
+        JOIN sub_services ss ON s.id = ss.service_id
+        SET s.fee = ss.fee
+        WHERE ss.fee IS NOT NULL AND ss.fee > 0;
+      `);
+    } catch (e) {}
+
+    // 3. Check and Seed Super Admin Demo Accounts
+    const [adminRows] = await pool.query("SELECT id FROM users WHERE mobile IN ('9999900001', '9999999999') LIMIT 1");
     if (adminRows.length === 0) {
-      const adminMobile = '9999999999';
-      const passwordHash = await bcrypt.hash('Admin@12345', 10);
+      const adminPasswordHash = await bcrypt.hash('Admin@123', 10);
       const adminUuid = crypto.randomUUID();
 
       const [insertRes] = await pool.query(
         `INSERT INTO users (
           uuid, role, full_name, mobile, email, password_hash, approval_status, is_active
-        ) VALUES (?, 'super_admin', 'Super Admin Master', ?, 'admin@v2online.in', ?, 'approved', true)`,
-        [adminUuid, adminMobile, passwordHash]
+        ) VALUES (?, 'super_admin', 'Super Admin Master', '9999900001', 'admin@v2online.in', ?, 'approved', true)`,
+        [adminUuid, adminPasswordHash]
       );
 
-      await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [insertRes.insertId]);
+      await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 10000.00)', [insertRes.insertId]);
 
-      console.log('👑 [Auto-Seed] Super Admin initialized on XAMPP MySQL:');
-      console.log(`   📱 Mobile: ${adminMobile} | 🔑 Password: Admin@12345`);
+      console.log('👑 [Auto-Seed] Super Admin initialized: Mobile 9999900001 | Password Admin@123');
     }
 
     // 4. Check and Seed Default Distributor
-    const [distributorRows] = await pool.query("SELECT id FROM users WHERE role = 'distributor' LIMIT 1");
+    const [distributorRows] = await pool.query("SELECT id FROM users WHERE mobile IN ('9999900003', '8888888888') LIMIT 1");
     let distributorId = null;
     if (distributorRows.length === 0) {
-      const distMobile = '8888888888';
       const distPasswordHash = await bcrypt.hash('Distributor@123', 10);
       const distUuid = crypto.randomUUID();
 
       const [distRes] = await pool.query(
         `INSERT INTO users (
           uuid, role, full_name, mobile, email, password_hash, district, tehsil, approval_status, is_active
-        ) VALUES (?, 'distributor', 'Rajesh Sharma Distributor', ?, 'distributor@v2online.in', ?, 'Bhopal', 'Huzur', 'approved', true)`,
-        [distUuid, distMobile, distPasswordHash]
+        ) VALUES (?, 'distributor', 'Rajesh Sharma Distributor', '9999900003', 'distributor@v2online.in', ?, 'Bhopal', 'Huzur', 'approved', true)`,
+        [distUuid, distPasswordHash]
       );
       distributorId = distRes.insertId;
 
       await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 3250.00)', [distRes.insertId]);
 
-      console.log('🏬 [Auto-Seed] Default Distributor initialized on XAMPP MySQL:');
-      console.log(`   📱 Mobile: ${distMobile} | 🔑 Password: Distributor@123`);
+      console.log('🏬 [Auto-Seed] Default Distributor initialized: Mobile 9999900003 | Password Distributor@123');
     } else {
       distributorId = distributorRows[0].id;
     }
 
     // 4b. Check and Seed Default Manager
-    const [managerRows] = await pool.query("SELECT id FROM users WHERE role = 'manager' LIMIT 1");
+    const [managerRows] = await pool.query("SELECT id FROM users WHERE mobile IN ('9999900002', '7777777777') LIMIT 1");
     if (managerRows.length === 0) {
-      const mgrMobile = '7777777777';
       const mgrPasswordHash = await bcrypt.hash('Manager@123', 10);
       const mgrUuid = crypto.randomUUID();
 
       const [mgrRes] = await pool.query(
         `INSERT INTO users (
           uuid, role, full_name, mobile, email, password_hash, district, tehsil, approval_status, is_active
-        ) VALUES (?, 'manager', 'Sanjay Verma Manager', ?, 'manager@v2online.in', ?, 'Bhopal', 'Huzur', 'approved', true)`,
-        [mgrUuid, mgrMobile, mgrPasswordHash]
+        ) VALUES (?, 'manager', 'Sanjay Verma Manager', '9999900002', 'manager@v2online.in', ?, 'Bhopal', 'Huzur', 'approved', true)`,
+        [mgrUuid, mgrPasswordHash]
       );
 
       await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 5000.00)', [mgrRes.insertId]);
 
-      console.log('💼 [Auto-Seed] Default Manager initialized on XAMPP MySQL:');
-      console.log(`   📱 Mobile: ${mgrMobile} | 🔑 Password: Manager@123`);
+      console.log('💼 [Auto-Seed] Default Manager initialized: Mobile 9999900002 | Password Manager@123');
+    }
+
+    // 4c. Check and Seed Default Operator (9999900005)
+    const [operatorRows] = await pool.query("SELECT id FROM users WHERE mobile = '9999900005' LIMIT 1");
+    if (operatorRows.length === 0) {
+      const opPasswordHash = await bcrypt.hash('Operator@123', 10);
+      const opUuid = crypto.randomUUID();
+
+      const [opRes] = await pool.query(
+        `INSERT INTO users (
+          uuid, role, full_name, mobile, email, password_hash, district, tehsil, approval_status, is_active
+        ) VALUES (?, 'operator', 'Sunil Kumar Operator', '9999900005', 'operator@v2online.in', ?, 'Bhopal', 'Huzur', 'approved', true)`,
+        [opUuid, opPasswordHash]
+      );
+
+      await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 1500.00)', [opRes.insertId]);
+
+      console.log('🎧 [Auto-Seed] Default Operator initialized: Mobile 9999900005 | Password Operator@123');
     }
 
     // 5. Check and Seed Default Initial Shops into MySQL DB

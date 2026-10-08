@@ -186,7 +186,7 @@ export default function AgentTerms() {
                     <span>Mandatory Customer Receipts (पावती रसीद)</span>
                   </div>
                   <p className="text-xs text-slate-600 leading-relaxed">
-                    Operators must issue an official application acknowledgement receipt or tracking code (Task ID) to every applicant upon successful form submission.
+                    Operators must issue an official application acknowledgement receipt or tracking code (Application ID) to every applicant upon successful form submission.
                   </p>
                 </div>
 
