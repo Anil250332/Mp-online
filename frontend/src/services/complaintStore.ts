@@ -44,6 +44,7 @@ class ComplaintStoreService {
 
   
   public async syncBackend() {
+    if (!localStorage.getItem('v2online_token')) return;
     try {
       const response = await apiClient.get('/complaints');
       if (response.data.status === 'success' && Array.isArray(response.data.data)) {
@@ -72,6 +73,7 @@ class ComplaintStoreService {
       IN_REVIEW: 2,
       RESOLVED: 3,
       CLOSED: 4
+
     };
 
     return [...list].sort((a, b) => {
