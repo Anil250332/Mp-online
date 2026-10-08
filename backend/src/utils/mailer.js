@@ -5,18 +5,18 @@ import pool from '../config/db.js';
  * Lazy creation of Nodemailer Transporter
  */
 const getTransporter = () => {
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
 
-  if (host.includes('gmail.com') || (user && user.includes('gmail.com'))) {
+  if (host.includes('gmail.com') || user.includes('gmail.com')) {
     return nodemailer.createTransport({
       service: 'gmail',
       auth: user && pass ? { user, pass } : undefined
     });
   }
 
-  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  const port = parseInt((process.env.SMTP_PORT || '587').trim(), 10);
   return nodemailer.createTransport({
     host,
     port,
@@ -37,14 +37,21 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     return false;
   }
 
-  const user = process.env.SMTP_USER;
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
+
+  // For Gmail, From header MUST match the authenticated Gmail account user to avoid Gmail 550/554 SendAsDenied rejection
+  const isGmail = (process.env.SMTP_HOST || '').includes('gmail.com') || user.includes('gmail.com');
   const defaultFrom = user ? `"V2Online MP Portal" <${user}>` : '"V2Online MP Portal" <no-reply@v2onlineportal.com>';
-  const from = (process.env.EMAIL_FROM && !process.env.EMAIL_FROM.includes('no-reply@v2onlineportal.com'))
-    ? process.env.EMAIL_FROM
-    : defaultFrom;
+  
+  const from = (isGmail && user) 
+    ? `"V2Online MP Portal" <${user}>`
+    : ((process.env.EMAIL_FROM && !process.env.EMAIL_FROM.includes('no-reply@v2onlineportal.com')) 
+        ? process.env.EMAIL_FROM 
+        : defaultFrom);
 
   // Check if SMTP credentials are configured
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+  if (!user || !pass) {
     console.log(`\n================ EMAIL NOTIFICATION (DEV SIMULATION) ================`);
     console.log(`To: ${to}`);
     console.log(`From: ${from}`);
@@ -69,7 +76,7 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     console.log(`📧 [Mailer] Email successfully sent to ${to} | MessageID: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error(`❌ [Mailer Error] Failed to send email to ${to}:`, error.message);
+    console.error(`❌ [Mailer Error] Failed to send email to ${to}:`, error.message, error.stack);
     return false; // Return false but do not throw to prevent blocking calling endpoints
   }
 };
