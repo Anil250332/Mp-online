@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import apiClient from '../../api/client';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
 import {
   ShieldCheck,
   Phone,
@@ -26,7 +28,7 @@ export const LoginPage: React.FC = () => {
   const [mobile, setMobile] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const loginAction = useAsyncAction();
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
@@ -38,7 +40,12 @@ export const LoginPage: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
-  const [forgotLoading, setForgotLoading] = useState(false);
+  // Har forgot-password step ka apna 3-stage button state
+  const sendOtpAction = useAsyncAction();
+  const resendOtpAction = useAsyncAction();
+  const verifyOtpAction = useAsyncAction();
+  const resetPassAction = useAsyncAction();
+  const forgotBusy = sendOtpAction.isLoading || resendOtpAction.isLoading || verifyOtpAction.isLoading || resetPassAction.isLoading;
   const [forgotError, setForgotError] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState('');
 
@@ -64,7 +71,7 @@ export const LoginPage: React.FC = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
@@ -79,29 +86,32 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    setIsLoading(true);
-    const result = await login(mobile, password);
-    setIsLoading(false);
-
-    if (result.success && result.redirectUrl) {
-      navigate(result.redirectUrl, { replace: true });
-    } else {
-      setErrorMessage(result.message);
-    }
+    loginAction.run(async () => {
+      try {
+        const result = await login(mobile, password);
+        if (result.success && result.redirectUrl) {
+          navigate(result.redirectUrl, { replace: true });
+          return true;
+        }
+        setErrorMessage(result.message || 'Login failed.');
+        return false;
+      } catch (err: any) {
+        setErrorMessage(err.response?.data?.message || err.message || 'Login failed.');
+        return false;
+      }
+    });
   };
 
-  // Step 1: Send Forgot Password OTP to Email
-  const handleSendForgotOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Step 1: Send Forgot Password OTP to Email (Send + Resend dono yahi use karte hain)
+  const sendForgotOtp = async (): Promise<boolean> => {
     setForgotError('');
     setForgotSuccess('');
 
     if (!resetEmail.trim()) {
       setForgotError('Kripya apna registered Email address enter karein.');
-      return;
+      return false;
     }
 
-    setForgotLoading(true);
     try {
       const res = await apiClient.post('/auth/forgot-password-otp', { email: resetEmail });
       if (res.data.status === 'success') {
@@ -109,16 +119,27 @@ export const LoginPage: React.FC = () => {
         setForgotStep('otp');
         setTimerSeconds(900); // 15 Minutes
         setIsTimerActive(true);
+        return true;
       }
+      setForgotError(res.data.message || 'OTP send nahi ho paaya.');
+      return false;
     } catch (err: any) {
-      setForgotError(err.response?.data?.message || 'OTP send karne me error aaya. Kripya email check karein.');
-    } finally {
-      setForgotLoading(false);
+      setForgotError(err.response?.data?.message || err.message || 'OTP send karne me error aaya. Kripya email check karein.');
+      return false;
     }
   };
 
+  const handleSendForgotOtp = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendOtpAction.run(sendForgotOtp);
+  };
+
+  const handleResendForgotOtp = () => {
+    resendOtpAction.run(sendForgotOtp);
+  };
+
   // Step 2: Verify Forgot Password OTP
-  const handleVerifyForgotOtp = async (e: React.FormEvent) => {
+  const handleVerifyForgotOtp = (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
     setForgotSuccess('');
@@ -128,25 +149,28 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    setForgotLoading(true);
-    try {
-      const res = await apiClient.post('/auth/verify-reset-otp', {
-        email: resetEmail,
-        otp: resetOtp
-      });
-      if (res.data.status === 'success') {
-        setForgotSuccess(res.data.message);
-        setForgotStep('reset');
+    verifyOtpAction.run(async () => {
+      try {
+        const res = await apiClient.post('/auth/verify-reset-otp', {
+          email: resetEmail,
+          otp: resetOtp
+        });
+        if (res.data.status === 'success') {
+          setForgotSuccess(res.data.message);
+          setForgotStep('reset');
+          return true;
+        }
+        setForgotError(res.data.message || 'OTP verify nahi ho paaya.');
+        return false;
+      } catch (err: any) {
+        setForgotError(err.response?.data?.message || err.message || 'Galat OTP enter kiya gaya hai.');
+        return false;
       }
-    } catch (err: any) {
-      setForgotError(err.response?.data?.message || 'Galat OTP enter kiya gaya hai.');
-    } finally {
-      setForgotLoading(false);
-    }
+    });
   };
 
   // Step 3: Reset Password with OTP
-  const handleResetPassword = async (e: React.FormEvent) => {
+  const handleResetPassword = (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
     setForgotSuccess('');
@@ -161,31 +185,35 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    setForgotLoading(true);
-    try {
-      const res = await apiClient.post('/auth/reset-password', {
-        email: resetEmail,
-        otp: resetOtp,
-        newPassword
-      });
+    resetPassAction.run(async () => {
+      try {
+        const res = await apiClient.post('/auth/reset-password', {
+          email: resetEmail,
+          otp: resetOtp,
+          newPassword
+        });
 
-      if (res.data.status === 'success') {
-        setShowForgotModal(false);
-        setErrorMessage('');
-        setSuccessMessage('🎉 Password safaltapoorvak reset ho gaya hai! Kripya apne naye password se login karein.');
-        
-        // Reset Modal State
-        setForgotStep('email');
-        setResetEmail('');
-        setResetOtp('');
-        setNewPassword('');
-        setConfirmPassword('');
+        if (res.data.status === 'success') {
+          setShowForgotModal(false);
+          setErrorMessage('');
+          setSuccessMessage('🎉 Password safaltapoorvak reset ho gaya hai! Kripya apne naye password se login karein.');
+
+          // Reset Modal State
+          setForgotStep('email');
+          setResetEmail('');
+          setResetOtp('');
+          setNewPassword('');
+          setConfirmPassword('');
+          setIsTimerActive(false);
+          return true;
+        }
+        setForgotError(res.data.message || 'Password reset failed.');
+        return false;
+      } catch (err: any) {
+        setForgotError(err.response?.data?.message || err.message || 'Password reset failed.');
+        return false;
       }
-    } catch (err: any) {
-      setForgotError(err.response?.data?.message || 'Password reset failed.');
-    } finally {
-      setForgotLoading(false);
-    }
+    });
   };
 
   const resetModalState = () => {
@@ -327,83 +355,21 @@ export const LoginPage: React.FC = () => {
               </div>
 
               <div className="pt-2">
-                <button
+                <ActionButton
                   type="submit"
-                  disabled={isLoading}
+                  state={loginAction.state}
+                  loadingText="Signing In..."
+                  successText="Signed In!"
+                  errorText="Login Failed"
                   className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-md text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-all cursor-pointer"
                 >
-                  {isLoading ? (
-                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                  ) : (
-                    <>
-                      <span>Secure Sign In</span>
-                      <ArrowRight className="h-4 w-4" />
-                    </>
-                  )}
-                </button>
+                  <span>Secure Sign In</span>
+                  <ArrowRight className="h-4 w-4" />
+                </ActionButton>
               </div>
             </form>
 
             <div className="mt-6 pt-5 border-t border-slate-100 text-center space-y-3">
-              {/* Quick Demo Fill Buttons */}
-              <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl text-left space-y-2">
-                <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider block">
-                  ⚡ Quick Demo Logins (All 5 Roles)
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobile('9999900001');
-                      setPassword('Admin@123');
-                    }}
-                    className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs cursor-pointer"
-                  >
-                    👑 Super Admin (9999900001)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobile('9999900002');
-                      setPassword('Manager@123');
-                    }}
-                    className="px-2.5 py-1 bg-white hover:bg-violet-100 border border-violet-200 text-violet-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs cursor-pointer"
-                  >
-                    💼 Manager (9999900002)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobile('9999900003');
-                      setPassword('Distributor@123');
-                    }}
-                    className="px-2.5 py-1 bg-white hover:bg-blue-100 border border-blue-200 text-blue-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs cursor-pointer"
-                  >
-                    🏬 Distributor (9999900003)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobile('9999900004');
-                      setPassword('Agent@123');
-                    }}
-                    className="px-2.5 py-1 bg-white hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs cursor-pointer"
-                  >
-                    🏪 Retailer Shop (9999900004)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobile('9999900005');
-                      setPassword('Operator@123');
-                    }}
-                    className="px-2.5 py-1 bg-white hover:bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-bold rounded-lg transition-colors shadow-xs cursor-pointer"
-                  >
-                    🎧 Operator (9999900005)
-                  </button>
-                </div>
-              </div>
-
               <p className="text-xs text-slate-600">
                 Naye Retailer ya Operator hain?{' '}
                 <Link to="/register" className="font-bold text-blue-600 hover:text-blue-700">
@@ -489,20 +455,17 @@ export const LoginPage: React.FC = () => {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={forgotLoading}
+                    state={sendOtpAction.state}
+                    loadingText="Sending..."
+                    successText="OTP Sent!"
+                    errorText="Failed"
                     className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    {forgotLoading ? (
-                      <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                    ) : (
-                      <>
-                        <span>Send Reset OTP</span>
-                        <ArrowRight className="h-4 w-4" />
-                      </>
-                    )}
-                  </button>
+                    <span>Send Reset OTP</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </ActionButton>
                 </div>
               </form>
             )}
@@ -545,15 +508,19 @@ export const LoginPage: React.FC = () => {
                   >
                     ← Change Email
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleSendForgotOtp}
-                    disabled={forgotLoading}
+                  <ActionButton
+                    state={resendOtpAction.state}
+                    onClick={handleResendForgotOtp}
+                    disabled={forgotBusy && !resendOtpAction.isLoading}
+                    loadingText="Resending..."
+                    successText="OTP Sent!"
+                    errorText="Failed"
+                    keepColorOnResult
                     className="text-blue-600 font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
                   >
-                    <RefreshCw className={`h-3 w-3 ${forgotLoading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className="h-3 w-3" />
                     <span>Resend OTP</span>
-                  </button>
+                  </ActionButton>
                 </div>
 
                 <div className="flex items-center gap-3 pt-2">
@@ -564,20 +531,18 @@ export const LoginPage: React.FC = () => {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={forgotLoading}
+                    state={verifyOtpAction.state}
+                    disabled={resendOtpAction.isLoading}
+                    loadingText="Verifying..."
+                    successText="Verified!"
+                    errorText="Invalid OTP"
                     className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    {forgotLoading ? (
-                      <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                    ) : (
-                      <>
-                        <span>Verify OTP</span>
-                        <CheckCircle2 className="h-4 w-4" />
-                      </>
-                    )}
-                  </button>
+                    <span>Verify OTP</span>
+                    <CheckCircle2 className="h-4 w-4" />
+                  </ActionButton>
                 </div>
               </form>
             )}
@@ -642,20 +607,17 @@ export const LoginPage: React.FC = () => {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={forgotLoading}
+                    state={resetPassAction.state}
+                    loadingText="Resetting..."
+                    successText="Password Reset!"
+                    errorText="Reset Failed"
                     className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    {forgotLoading ? (
-                      <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                    ) : (
-                      <>
-                        <span>Reset Password & Sign In</span>
-                        <CheckCircle2 className="h-4 w-4" />
-                      </>
-                    )}
-                  </button>
+                    <span>Reset Password & Sign In</span>
+                    <CheckCircle2 className="h-4 w-4" />
+                  </ActionButton>
                 </div>
               </form>
             )}

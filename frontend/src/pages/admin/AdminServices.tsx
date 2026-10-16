@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { apiClient } from '../../api/client';
+import { apiClient, FILE_BASE_URL } from '../../api/client';
+import { useAppDispatch, useAppSelector, selectServices, selectServicesStatus, isInitialLoading } from '../../store/hooks';
+import { fetchServices } from '../../store/slices/servicesSlice';
+import { useAsyncAction, useKeyedAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton, SkeletonTable, SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   serviceStore,
   type ServiceItem,
@@ -35,12 +40,33 @@ import {
   Building2,
   MapPin,
   Loader2,
-  Link2
+  Link2,
+  XCircle
 } from 'lucide-react';
 
+// Unique ID helpers — component ke bahar rakhe hain taaki render ke dauraan impure call (Date.now / Math.random) na ho.
+// Sirf event handlers (Add Field / Add Sub-Service click) se call hote hain.
+let localIdSeq = 0;
+const makeLocalId = (prefix: string) => {
+  localIdSeq += 1;
+  return `${prefix}-${Date.now()}-${localIdSeq}-${Math.floor(Math.random() * 1000)}`;
+};
+const makeSubServiceCode = (baseCode: string, subNum: number) =>
+  `${baseCode || 'SRV'}-SUB${subNum}-${Math.floor(100 + Math.random() * 900)}`;
+
+// Error object / axios error se readable message nikalna
+const errorText = (err: unknown, fallback: string) => {
+  const anyErr = err as { response?: { data?: { message?: string } }; message?: string };
+  return anyErr?.response?.data?.message || anyErr?.message || fallback;
+};
+
 export default function AdminServices() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [services, setServices] = useState<ServiceItem[]>([]);
+  const dispatch = useAppDispatch();
+  // Services list Redux se aati hai (read-only / frozen) — edit ke liye hamesha structuredClone karein
+  const services = useAppSelector(selectServices);
+  const servicesStatus = useAppSelector(selectServicesStatus);
+  const servicesError = useAppSelector(s => s.services.error);
+  const showServicesSkeleton = isInitialLoading(servicesStatus, services.length);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'direct' | 'sub' | 'active' | 'disabled'>('all');
   const [successMsg, setSuccessMsg] = useState('');
@@ -57,7 +83,6 @@ export default function AdminServices() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [iconUrl, setIconUrl] = useState('');
-  const [iconUploading, setIconUploading] = useState(false);
   const [hasSubServices, setHasSubServices] = useState(false);
   const [operatorAssignmentMode, setOperatorAssignmentMode] = useState<'single' | 'area_wise' | 'ward_wise'>('single');
 
@@ -84,7 +109,6 @@ export default function AdminServices() {
   const [assignSelectedOperatorId, setAssignSelectedOperatorId] = useState('');
   const [assignAreaLabel, setAssignAreaLabel] = useState('');
   const [assignWardNo, setAssignWardNo] = useState('');
-  const [assignSubmitting, setAssignSubmitting] = useState(false);
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
 
@@ -94,7 +118,24 @@ export default function AdminServices() {
   const [reviewModalRequest, setReviewModalRequest] = useState<any | null>(null);
   const [reviewApprovedPrice, setReviewApprovedPrice] = useState<string>('');
   const [reviewRemarks, setReviewRemarks] = useState('');
-  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  // Pehli baar data aaya ya nahi (skeleton sirf first load par)
+  const [operatorsLoaded, setOperatorsLoaded] = useState(false);
+  const [assignmentsLoaded, setAssignmentsLoaded] = useState(false);
+  const [priceRequestsLoaded, setPriceRequestsLoaded] = useState(false);
+
+  // 3-stage button actions
+  const saveAction = useAsyncAction();
+  const iconAction = useAsyncAction();
+  const assignAction = useAsyncAction();
+  const refreshRequestsAction = useAsyncAction();
+  const reviewAction = useKeyedAsyncAction();
+  const rowAction = useKeyedAsyncAction();
+
+  // Page-level error (toggle / delete / price review) — 5 sec baad apne aap hat jata hai
+  const showPageError = (msg: string) => {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(''), 5000);
+  };
 
   const fetchOperators = useCallback(async () => {
     try {
@@ -103,6 +144,7 @@ export default function AdminServices() {
         setAllOperators(res.data.data.filter((o: any) => o.approvalStatus === 'approved'));
       }
     } catch (e) { console.error('Failed to fetch operators:', e); }
+    finally { setOperatorsLoaded(true); }
   }, []);
 
   const fetchAssignments = useCallback(async () => {
@@ -112,76 +154,63 @@ export default function AdminServices() {
         setAllAssignments(res.data.data);
       }
     } catch (e) { console.error('Failed to fetch assignments:', e); }
+    finally { setAssignmentsLoaded(true); }
   }, []);
 
-  const fetchPriceRequests = useCallback(async () => {
+  // true = success, false = fail (Refresh button ke 3-stage state ke liye)
+  const fetchPriceRequests = useCallback(async (): Promise<boolean> => {
     try {
       const res = await apiClient.get('/services/price-requests');
       if (res.data.status === 'success') {
         setAllPriceRequests(res.data.data);
+        return true;
       }
-    } catch (e) { console.error('Failed to fetch price requests:', e); }
+      return false;
+    } catch (e) {
+      console.error('Failed to fetch price requests:', e);
+      return false;
+    } finally {
+      setPriceRequestsLoaded(true);
+    }
   }, []);
 
-  const handleReviewPriceRequest = async (requestId: string, status: 'approved' | 'rejected') => {
-    setReviewSubmitting(true);
-    try {
-      const res = await apiClient.patch(`/services/price-requests/${requestId}/review`, {
-        status,
-        approvedPrice: parseFloat(reviewApprovedPrice),
-        adminRemarks: reviewRemarks
-      });
+  const handleReviewPriceRequest = (requestId: string, status: 'approved' | 'rejected') =>
+    reviewAction.run(status, async () => {
+      setErrorMsg('');
+      const approvedPrice = parseFloat(reviewApprovedPrice);
+      if (status === 'approved' && (isNaN(approvedPrice) || approvedPrice <= 0)) {
+        showPageError('Approve karne ke liye valid Approved Amount (₹) enter karein.');
+        return false;
+      }
+      try {
+        const res = await apiClient.patch(`/services/price-requests/${requestId}/review`, {
+          status,
+          approvedPrice,
+          adminRemarks: reviewRemarks
+        });
 
-      if (res.data.status === 'success') {
+        if (res.data.status !== 'success') {
+          throw new Error(res.data.message || 'Failed to review price request.');
+        }
         setSuccessMsg(res.data.message || `Price request ${status} successfully!`);
         setReviewModalRequest(null);
         setReviewRemarks('');
         await fetchPriceRequests();
-        await serviceStore.syncBackend();
+        await dispatch(fetchServices());
         setTimeout(() => setSuccessMsg(''), 5000);
+      } catch (err) {
+        showPageError(errorText(err, 'Failed to review price request.'));
+        throw err;
       }
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Failed to review price request.');
-      setTimeout(() => setErrorMsg(''), 5000);
-    } finally {
-      setReviewSubmitting(false);
-    }
-  };
+    });
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadData = async () => {
-      setIsLoading(true);
-      try {
-        await serviceStore.syncBackend();
-        if (isMounted) {
-          setServices(serviceStore.getServices());
-        }
-      } catch (err) {
-        console.error('Failed to load services:', err);
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    loadData();
-
-    const update = () => {
-      setServices(serviceStore.getServices());
-    };
-
-    const unsubscribe = serviceStore.subscribe(update);
+    // Services Redux me load karo; baaki data (operators / assignments / price requests) local state me
+    dispatch(fetchServices());
     fetchOperators();
     fetchAssignments();
     fetchPriceRequests();
-    return () => {
-      isMounted = false;
-      unsubscribe();
-    };
-  }, [fetchOperators, fetchAssignments, fetchPriceRequests]);
+  }, [dispatch, fetchOperators, fetchAssignments, fetchPriceRequests]);
 
   // Get the routing mode for the currently selected service in assign modal
   const getSelectedServiceMode = (): 'single' | 'area_wise' | 'ward_wise' => {
@@ -190,48 +219,50 @@ export default function AdminServices() {
     return svc?.operatorAssignmentMode || 'single';
   };
 
-  const handleCreateAssignment = async (e: React.FormEvent) => {
+  const handleCreateAssignment = (e: React.FormEvent) => {
     e.preventDefault();
-    setAssignError('');
-    setAssignSuccess('');
+    assignAction.run(async () => {
+      setAssignError('');
+      setAssignSuccess('');
 
-    if (!assignSelectedServiceId) {
-      setAssignError('Kripya ek Service select karein.');
-      return;
-    }
-
-    if (!assignSelectedOperatorId) {
-      setAssignError('Kripya ek Operator select karein.');
-      return;
-    }
-
-    const mode = getSelectedServiceMode();
-    if (mode === 'area_wise' && (!assignAreaLabel || !assignAreaLabel.trim())) {
-      setAssignError('Office / Area Name enter karna mandatory hai (Area Wise mode ke liye).');
-      return;
-    }
-
-    if (mode === 'ward_wise') {
-      if (!assignWardNo || isNaN(Number(assignWardNo))) {
-        setAssignError('Valid Gwalior Ward Number (1-100) enter karna mandatory hai (Ward Wise mode ke liye).');
-        return;
+      if (!assignSelectedServiceId) {
+        setAssignError('Kripya ek Service select karein.');
+        return false;
       }
-      const wardNum = parseInt(assignWardNo, 10);
-      if (wardNum < 1 || wardNum > 100) {
-        setAssignError('Ward Number 1 se 100 ke beech hona chahiye.');
-        return;
-      }
-    }
 
-    setAssignSubmitting(true);
-    try {
-      const res = await apiClient.post('/operator-assignments', {
-        operator_id: assignSelectedOperatorId,
-        service_id: assignSelectedServiceId,
-        area_label: mode === 'area_wise' ? assignAreaLabel.trim() : null,
-        ward_no: mode === 'ward_wise' ? String(assignWardNo).trim() : null
-      });
-      if (res.data.status === 'success') {
+      if (!assignSelectedOperatorId) {
+        setAssignError('Kripya ek Operator select karein.');
+        return false;
+      }
+
+      const mode = getSelectedServiceMode();
+      if (mode === 'area_wise' && (!assignAreaLabel || !assignAreaLabel.trim())) {
+        setAssignError('Office / Area Name enter karna mandatory hai (Area Wise mode ke liye).');
+        return false;
+      }
+
+      if (mode === 'ward_wise') {
+        if (!assignWardNo || isNaN(Number(assignWardNo))) {
+          setAssignError('Valid Gwalior Ward Number (1-100) enter karna mandatory hai (Ward Wise mode ke liye).');
+          return false;
+        }
+        const wardNum = parseInt(assignWardNo, 10);
+        if (wardNum < 1 || wardNum > 100) {
+          setAssignError('Ward Number 1 se 100 ke beech hona chahiye.');
+          return false;
+        }
+      }
+
+      try {
+        const res = await apiClient.post('/operator-assignments', {
+          operator_id: assignSelectedOperatorId,
+          service_id: assignSelectedServiceId,
+          area_label: mode === 'area_wise' ? assignAreaLabel.trim() : null,
+          ward_no: mode === 'ward_wise' ? String(assignWardNo).trim() : null
+        });
+        if (res.data.status !== 'success') {
+          throw new Error(res.data.message || 'Failed to assign operator.');
+        }
         setAssignSuccess(res.data.message || 'Operator successfully assigned to service!');
         setAssignSelectedServiceId('');
         setAssignSelectedOperatorId('');
@@ -239,12 +270,11 @@ export default function AdminServices() {
         setAssignWardNo('');
         await fetchAssignments();
         setTimeout(() => setAssignSuccess(''), 4000);
+      } catch (err) {
+        setAssignError(errorText(err, 'Failed to assign operator.'));
+        throw err;
       }
-    } catch (err: any) {
-      setAssignError(err.response?.data?.message || 'Failed to assign operator.');
-    } finally {
-      setAssignSubmitting(false);
-    }
+    });
   };
 
   const resetForm = () => {
@@ -279,8 +309,9 @@ export default function AdminServices() {
     setOperatorAssignmentMode(service.operatorAssignmentMode || 'single');
     setFee(service.fee || '');
     setAdminCommissionPercent(service.adminCommissionPercent || '');
-    setDirectFormFields(service.formFields || []);
-    setSubServices(service.subServices || []);
+    // Redux object frozen hai + cancel par catalog mutate na ho — isliye deep clone
+    setDirectFormFields(structuredClone(service.formFields || []));
+    setSubServices(structuredClone(service.subServices || []));
     setSelectedSubIndex(0);
     setIsModalOpen(true);
   };
@@ -289,34 +320,62 @@ export default function AdminServices() {
   const getImageUrl = (url?: string) => {
     if (!url) return '';
     if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
-    return `http://localhost:5000${url}`;
+    return `${FILE_BASE_URL}${url}`;
   };
 
   // Icon Upload Handler
-  const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleIconUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // same file dobara select ho sake
     if (!file) return;
 
-    const localPreview = URL.createObjectURL(file);
-    setIconUrl(localPreview);
-    setIconUploading(true);
-
-    try {
-      const serverUrl = await serviceStore.uploadIcon(file);
-      if (serverUrl) {
+    const previousIcon = iconUrl;
+    iconAction.run(async () => {
+      setErrorMsg('');
+      const localPreview = URL.createObjectURL(file);
+      setIconUrl(localPreview);
+      try {
+        const serverUrl = await serviceStore.uploadIcon(file);
         setIconUrl(serverUrl);
+      } catch (err) {
+        // Upload fail: blob preview DB me save na ho, purana icon wapas
+        setIconUrl(previousIcon);
+        setErrorMsg(errorText(err, 'Icon upload failed.'));
+        throw err;
+      } finally {
+        URL.revokeObjectURL(localPreview);
       }
-    } catch {
-      // Keep local preview
-    } finally {
-      setIconUploading(false);
-    }
+    });
+  };
+
+  // Sub-Service Icon Upload (file picker programmatically khulta hai)
+  const handleSubIconPick = (subId: string) => {
+    if (rowAction.stateOf(`subicon-${subId}`) === 'loading') return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = (ev: Event) => {
+      const file = (ev.target as HTMLInputElement | null)?.files?.[0];
+      if (!file) return;
+      rowAction.run(`subicon-${subId}`, async () => {
+        setErrorMsg('');
+        try {
+          const url = await serviceStore.uploadIcon(file);
+          // Functional update + id match — async ke baad stale index/state ka issue na ho
+          setSubServices(prev => prev.map(s => (s.id === subId ? { ...s, iconUrl: url } : s)));
+        } catch (err) {
+          setErrorMsg(errorText(err, 'Sub-service icon upload failed.'));
+          throw err;
+        }
+      });
+    };
+    input.click();
   };
 
   // Add Field to Form Builder
   const handleAddField = (target: 'direct' | number, fieldType: FormFieldType) => {
     const newField: FormField = {
-      id: `f-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: makeLocalId('f'),
       type: fieldType,
       label: '',
       placeholder: '',
@@ -410,9 +469,9 @@ export default function AdminServices() {
   const handleAddSubService = () => {
     const subNum = subServices.length + 1;
     const newSub: SubServiceItem = {
-      id: `sub-${Date.now()}`,
+      id: makeLocalId('sub'),
       name: '',
-      code: `${code || 'SRV'}-SUB${subNum}-${Math.floor(100 + Math.random() * 900)}`,
+      code: makeSubServiceCode(code, subNum),
       iconUrl: '',
       fee: '' as unknown as number,
       adminCommissionPercent: '' as unknown as number,
@@ -481,14 +540,29 @@ export default function AdminServices() {
     setWizardStep((prev) => Math.max(1, prev - 1) as 1 | 2 | 3);
   };
 
-  // Save Service Submit
-  const handleSaveService = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Commission 0-100 aur fee >= 0 check (HTML min/max form submit na hone se kabhi chalta hi nahi tha)
+  const validatePricing = (label: string, feeValue: unknown, commValue: unknown): string | null => {
+    const isBlank = (v: unknown) => v === '' || v === null || v === undefined;
+    if (!isBlank(feeValue)) {
+      const feeNum = Number(feeValue);
+      if (isNaN(feeNum) || feeNum < 0) return `${label}: Fee (₹) 0 ya usse zyada honi chahiye.`;
+    }
+    if (!isBlank(commValue)) {
+      const commNum = Number(commValue);
+      if (isNaN(commNum) || commNum < 0 || commNum > 100) {
+        return `${label}: Admin Commission % 0 se 100 ke beech hona chahiye.`;
+      }
+    }
+    return null;
+  };
+
+  // Save Service Submit (3-stage button + double-click protection useAsyncAction se)
+  const handleSaveService = () => saveAction.run(async () => {
     setErrorMsg('');
 
     if (!name.trim()) {
       setErrorMsg('Service Name is mandatory.');
-      return;
+      return false;
     }
 
     const parsedFee = parseFloat(fee as string) || 0;
@@ -497,22 +571,32 @@ export default function AdminServices() {
     if (hasSubServices) {
       if (subServices.length === 0) {
         setErrorMsg('Please add at least one Sub-Service or switch off "Having Sub-Services".');
-        return;
+        return false;
       }
       for (const sub of subServices) {
         if (!sub.name.trim()) {
           setErrorMsg('All Sub-Services must have a valid Name.');
-          return;
+          return false;
+        }
+        const pricingError = validatePricing(`Sub-Service "${sub.name}"`, sub.fee, sub.adminCommissionPercent);
+        if (pricingError) {
+          setErrorMsg(pricingError);
+          return false;
         }
         if (!sub.fee || Number(sub.fee) <= 0) {
           setErrorMsg(`Please enter a valid Price (₹) for "${sub.name}".`);
-          return;
+          return false;
         }
       }
     } else {
+      const pricingError = validatePricing(`Service "${name.trim()}"`, fee, adminCommissionPercent);
+      if (pricingError) {
+        setErrorMsg(pricingError);
+        return false;
+      }
       if (!fee || parsedFee <= 0) {
         setErrorMsg('Please enter a valid Service Price (₹).');
-        return;
+        return false;
       }
     }
 
@@ -531,33 +615,53 @@ export default function AdminServices() {
       operatorAssignmentMode: operatorAssignmentMode || 'single'
     };
 
-    if (isEditMode && editingServiceId) {
-      await serviceStore.updateService(editingServiceId, serviceData);
-      setSuccessMsg(`Service "${name}" updated successfully!`);
-    } else {
-      await serviceStore.addService(serviceData);
-      setSuccessMsg(`New Master Service "${name}" created & published successfully!`);
+    try {
+      if (isEditMode && editingServiceId) {
+        await serviceStore.updateService(editingServiceId, serviceData);
+        setSuccessMsg(`Service "${name}" updated successfully!`);
+      } else {
+        await serviceStore.addService(serviceData);
+        setSuccessMsg(`New Master Service "${name}" created & published successfully!`);
+      }
+    } catch (err) {
+      // Backend ka real error modal banner me dikhao, modal open rahe
+      setErrorMsg(errorText(err, isEditMode ? 'Failed to update service.' : 'Failed to create service.'));
+      throw err;
     }
 
     setIsModalOpen(false);
     setTimeout(() => setSuccessMsg(''), 3000);
-  };
+  });
 
 
   // Toggle Service
-  const handleToggle = async (service: ServiceItem) => {
-    await serviceStore.toggleService(service.id);
-    setSuccessMsg(`Service "${service.name}" is now ${!service.isActive ? 'ACTIVE' : 'DISABLED'}.`);
-    setTimeout(() => setSuccessMsg(''), 2500);
-  };
+  const handleToggle = (service: ServiceItem) =>
+    rowAction.run(`toggle-${service.id}`, async () => {
+      setErrorMsg('');
+      try {
+        await serviceStore.toggleService(service.id);
+        setSuccessMsg(`Service "${service.name}" is now ${!service.isActive ? 'ACTIVE' : 'DISABLED'}.`);
+        setTimeout(() => setSuccessMsg(''), 2500);
+      } catch (err) {
+        showPageError(errorText(err, 'Failed to change service status.'));
+        throw err;
+      }
+    });
 
-  // Delete Service
-  const handleDelete = async (service: ServiceItem) => {
-    if (window.confirm(`Are you sure you want to permanently delete service "${service.name}"?`)) {
-      await serviceStore.deleteService(service.id);
-      setSuccessMsg(`Service "${service.name}" deleted successfully.`);
-      setTimeout(() => setSuccessMsg(''), 2500);
-    }
+  // Delete Service (fail hone par — jaise linked applications ka FK error — error dikhega, success nahi)
+  const handleDelete = (service: ServiceItem) => {
+    if (!window.confirm(`Are you sure you want to permanently delete service "${service.name}"?`)) return;
+    rowAction.run(`delete-${service.id}`, async () => {
+      setErrorMsg('');
+      try {
+        await serviceStore.deleteService(service.id);
+        setSuccessMsg(`Service "${service.name}" deleted successfully.`);
+        setTimeout(() => setSuccessMsg(''), 2500);
+      } catch (err) {
+        showPageError(errorText(err, 'Failed to delete service.'));
+        throw err;
+      }
+    });
   };
 
   // Filter Catalog
@@ -882,25 +986,6 @@ export default function AdminServices() {
     </div>
   );
 
-  if (isLoading) {
-    return (
-      <DashboardLayout>
-        <div className="min-h-[500px] flex flex-col items-center justify-center py-20 px-4">
-          <div className="relative flex items-center justify-center mb-6">
-            <div className="absolute inset-0 rounded-full bg-blue-500/20 animate-ping"></div>
-            <div className="relative h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-xl shadow-blue-500/30">
-              <Loader2 className="h-8 w-8 animate-spin" />
-            </div>
-          </div>
-          <h3 className="text-lg font-bold text-slate-900 tracking-tight mb-1">Services Loading...</h3>
-          <p className="text-xs text-slate-500 max-w-sm text-center">
-            Server se Government Services, Categories, forms aur Rate list load ho rahi hain. Kripya prateeksha karein.
-          </p>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -910,6 +995,14 @@ export default function AdminServices() {
           <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-xl flex items-center gap-2 shadow-sm animate-in fade-in">
             <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
             <span className="text-sm font-semibold">{successMsg}</span>
+          </div>
+        )}
+
+        {/* Page-level error (modal ke bahar wale actions: toggle / delete / price review) */}
+        {errorMsg && !isModalOpen && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3 rounded-xl flex items-center gap-2 shadow-sm animate-in fade-in">
+            <AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
+            <span className="text-sm font-semibold">{errorMsg}</span>
           </div>
         )}
 
@@ -1007,13 +1100,17 @@ export default function AdminServices() {
                 </p>
               </div>
 
-              <button
-                onClick={fetchPriceRequests}
+              <ActionButton
+                state={refreshRequestsAction.state}
+                onClick={() => refreshRequestsAction.run(fetchPriceRequests)}
+                loadingText="Refreshing..."
+                successText="Updated"
+                errorText="Refresh failed"
                 className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
               >
                 <Sparkles className="h-3.5 w-3.5 text-teal-600" />
                 <span>Refresh Requests</span>
-              </button>
+              </ActionButton>
             </div>
 
             <div className="overflow-x-auto">
@@ -1031,7 +1128,9 @@ export default function AdminServices() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {allPriceRequests.length === 0 ? (
+                  {!priceRequestsLoaded && allPriceRequests.length === 0 ? (
+                    <SkeletonTableRows rows={4} cols={8} />
+                  ) : allPriceRequests.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-12 text-center text-slate-400 text-xs italic">
                         No operator price change requests found.
@@ -1173,21 +1272,36 @@ export default function AdminServices() {
                     />
                   </div>
 
+                  {errorMsg && (
+                    <div className="bg-rose-50 border border-rose-200 text-rose-800 px-3 py-2 rounded-xl flex items-center gap-2 text-xs font-semibold">
+                      <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                      <span>{errorMsg}</span>
+                    </div>
+                  )}
+
                   <div className="flex justify-end gap-2 pt-2">
-                    <button
+                    <ActionButton
+                      state={reviewAction.stateOf('rejected')}
                       onClick={() => handleReviewPriceRequest(reviewModalRequest.id, 'rejected')}
-                      disabled={reviewSubmitting}
+                      disabled={reviewAction.isAnyLoading}
+                      loadingText="Rejecting..."
+                      successText="Rejected"
+                      errorText="Failed"
                       className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
                     >
                       Reject Request
-                    </button>
-                    <button
+                    </ActionButton>
+                    <ActionButton
+                      state={reviewAction.stateOf('approved')}
                       onClick={() => handleReviewPriceRequest(reviewModalRequest.id, 'approved')}
-                      disabled={reviewSubmitting}
+                      disabled={reviewAction.isAnyLoading}
+                      loadingText="Approving..."
+                      successText="Approved"
+                      errorText="Failed"
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 shadow-md"
                     >
                       Approve & Apply New Rate
-                    </button>
+                    </ActionButton>
                   </div>
                 </div>
               </div>
@@ -1270,10 +1384,26 @@ export default function AdminServices() {
             <span className="text-xs text-slate-400">Master Services</span>
           </div>
 
-          {filteredServices.length === 0 ? (
+          {showServicesSkeleton ? (
+            <div className="p-4">
+              <SkeletonTable rows={5} cols={6} />
+            </div>
+          ) : filteredServices.length === 0 ? (
             <div className="p-12 text-center">
               <Layers className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-              <p className="text-sm font-medium text-slate-600">No services match your filters.</p>
+              <p className="text-sm font-medium text-slate-600">
+                {servicesStatus === 'failed' && services.length === 0
+                  ? servicesError || 'Services load nahi ho payi.'
+                  : 'No services match your filters.'}
+              </p>
+              {servicesStatus === 'failed' && services.length === 0 && (
+                <button
+                  onClick={() => dispatch(fetchServices())}
+                  className="mt-3 mr-3 text-xs text-slate-600 hover:underline font-bold cursor-pointer"
+                >
+                  Retry
+                </button>
+              )}
               <button
                 onClick={handleOpenCreateModal}
                 className="mt-3 text-xs text-blue-600 hover:underline font-bold cursor-pointer"
@@ -1404,7 +1534,10 @@ export default function AdminServices() {
                                     )}
                                   </div>
                                 )}
-                                {serviceAssignments.length === 0 && (
+                                {!assignmentsLoaded && (
+                                  <Skeleton className="h-3 w-24 mt-1" />
+                                )}
+                                {assignmentsLoaded && serviceAssignments.length === 0 && (
                                   <p className="text-[9px] text-slate-400 italic">No operator assigned</p>
                                 )}
                               </div>
@@ -1448,15 +1581,19 @@ export default function AdminServices() {
 
                         {/* Status Toggle */}
                         <td className="py-3.5 px-4">
-                          <button
+                          <ActionButton
+                            state={rowAction.stateOf(`toggle-${service.id}`)}
                             onClick={() => handleToggle(service)}
+                            loadingText="Saving"
+                            successText="Done"
+                            errorText="Failed"
                             className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase transition-all cursor-pointer ${service.isActive
                                 ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                                 : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                               }`}
                           >
                             {service.isActive ? 'ACTIVE' : 'DISABLED'}
-                          </button>
+                          </ActionButton>
                         </td>
 
                         {/* Actions */}
@@ -1476,13 +1613,17 @@ export default function AdminServices() {
                             >
                               <Edit className="h-4 w-4" />
                             </button>
-                            <button
+                            <ActionButton
+                              state={rowAction.stateOf(`delete-${service.id}`)}
                               onClick={() => handleDelete(service)}
+                              loadingText=""
+                              successText=""
+                              errorText=""
                               className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                               title="Delete Service"
                             >
                               <Trash2 className="h-4 w-4" />
-                            </button>
+                            </ActionButton>
                           </div>
                         </td>
                       </tr>
@@ -1640,15 +1781,18 @@ export default function AdminServices() {
                             onChange={handleIconUpload}
                             className="hidden"
                           />
-                          <button
-                            type="button"
+                          <ActionButton
+                            state={iconAction.state}
                             onClick={() => serviceIconInputRef.current?.click()}
-                            disabled={iconUploading}
+                            loadingText="Uploading..."
+                            successText="Uploaded"
+                            errorText="Upload failed"
+                            keepColorOnResult
                             className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
                           >
                             <Upload className="h-3 w-3" />
-                            {iconUploading ? 'Uploading...' : iconUrl ? 'Change Icon' : 'Upload Icon'}
-                          </button>
+                            {iconUrl ? 'Change Icon' : 'Upload Icon'}
+                          </ActionButton>
                         </div>
 
                         <div className="sm:col-span-9 space-y-2.5">
@@ -1859,24 +2003,16 @@ export default function AdminServices() {
                                 <div className="flex items-center gap-3 pb-2 border-b border-slate-100">
                                   <div
                                     className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-100 to-blue-50 border-2 border-dashed border-indigo-200 flex items-center justify-center overflow-hidden cursor-pointer hover:border-indigo-400 transition-colors shrink-0"
-                                    onClick={() => {
-                                      const input = document.createElement('input');
-                                      input.type = 'file';
-                                      input.accept = 'image/*';
-                                      input.onchange = async (ev: any) => {
-                                        const file = ev.target?.files?.[0];
-                                        if (!file) return;
-                                        const url = await serviceStore.uploadIcon(file);
-                                        const updated = [...subServices];
-                                        updated[selectedSubIndex].iconUrl = url;
-                                        setSubServices(updated);
-                                      };
-                                      input.click();
-                                    }}
+                                    onClick={() => handleSubIconPick(currentSub.id)}
                                     title="Upload Sub-Service Icon"
+                                    aria-busy={rowAction.stateOf(`subicon-${currentSub.id}`) === 'loading'}
                                   >
-                                    {currentSub.iconUrl ? (
-                                      <img src={currentSub.iconUrl} alt="icon" className="w-full h-full object-cover rounded-xl" />
+                                    {rowAction.stateOf(`subicon-${currentSub.id}`) === 'loading' ? (
+                                      <Loader2 className="h-4 w-4 text-indigo-500 animate-spin" />
+                                    ) : rowAction.stateOf(`subicon-${currentSub.id}`) === 'error' ? (
+                                      <XCircle className="h-4 w-4 text-red-500" />
+                                    ) : currentSub.iconUrl ? (
+                                      <img src={getImageUrl(currentSub.iconUrl)} alt="icon" className="w-full h-full object-cover rounded-xl" />
                                     ) : (
                                       <Upload className="h-4 w-4 text-indigo-400" />
                                     )}
@@ -1991,15 +2127,18 @@ export default function AdminServices() {
                                 onChange={handleIconUpload}
                                 className="hidden"
                               />
-                              <button
-                                type="button"
+                              <ActionButton
+                                state={iconAction.state}
                                 onClick={() => serviceIconInputRef.current?.click()}
-                                disabled={iconUploading}
+                                loadingText="Uploading..."
+                                successText="Uploaded"
+                                errorText="Upload failed"
+                                keepColorOnResult
                                 className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
                               >
                                 <Upload className="h-3.5 w-3.5" />
-                                {iconUploading ? 'Uploading...' : iconUrl ? 'Change Icon' : 'Upload Icon'}
-                              </button>
+                                {iconUrl ? 'Change Icon' : 'Upload Icon'}
+                              </ActionButton>
                             </div>
 
                             <div className="sm:col-span-8 space-y-3">
@@ -2292,14 +2431,17 @@ export default function AdminServices() {
                       <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   ) : (
-                    <button
-                      type="button"
+                    <ActionButton
+                      state={saveAction.state}
                       onClick={handleSaveService}
+                      loadingText={isEditMode ? 'Saving...' : 'Creating...'}
+                      successText={isEditMode ? 'Saved!' : 'Created!'}
+                      errorText="Failed"
                       className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5"
                     >
                       <Check className="h-4 w-4" />
                       <span>{isEditMode ? 'Save Changes' : 'Create & Publish Service'}</span>
-                    </button>
+                    </ActionButton>
                   )}
                 </div>
               </div>
@@ -2527,6 +2669,9 @@ export default function AdminServices() {
                           <label className="block text-xs font-bold text-slate-700 mb-1">
                             Select Operator <span className="text-rose-500">*</span>
                           </label>
+                          {!operatorsLoaded ? (
+                            <Skeleton className="h-9 w-full rounded-xl" />
+                          ) : (
                           <select
                             value={assignSelectedOperatorId}
                             onChange={e => setAssignSelectedOperatorId(e.target.value)}
@@ -2540,19 +2685,24 @@ export default function AdminServices() {
                               </option>
                             ))}
                           </select>
+                          )}
                         </div>
                       </div>
                     );
                   })()}
 
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={assignSubmitting || !assignSelectedServiceId || !assignSelectedOperatorId}
+                    state={assignAction.state}
+                    disabled={!assignSelectedServiceId || !assignSelectedOperatorId}
+                    loadingText="Assigning..."
+                    successText="Assigned!"
+                    errorText="Failed"
                     className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-2 px-4 rounded-xl text-xs shadow-md transition-colors cursor-pointer flex items-center justify-center gap-2"
                   >
-                    {assignSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                    <Plus className="h-4 w-4" />
                     <span>Assign Operator to Service</span>
-                  </button>
+                  </ActionButton>
                 </form>
 
 

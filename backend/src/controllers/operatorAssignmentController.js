@@ -41,9 +41,9 @@ export const getAssignments = async (req, res) => {
 
     const params = [];
 
-    // Filter by logged-in operator if role is operator
+    // Operator hamesha sirf apne assignments dekhega (query param se doosre operator ka data nahi)
     let effectiveOperatorId = operator_id;
-    if (!effectiveOperatorId && req.user && req.user.role === 'operator') {
+    if (req.user && req.user.role === 'operator') {
       effectiveOperatorId = req.user.id;
     }
 
@@ -156,14 +156,16 @@ export const createAssignment = async (req, res) => {
           const code = sInfo[0].code || `SRV-${serviceId}`;
           const fee = parseFloat(sInfo[0].fee || 0);
           const comm = parseFloat(sInfo[0].admin_commission_percentage || 0);
-          const schema = sInfo[0].form_schema || '[]';
+          // mysql2 JSON column ko already-parsed object deta hai — INSERT ke liye string chahiye
+          const rawSchema = sInfo[0].form_schema;
+          const schema = typeof rawSchema === 'string' ? rawSchema : JSON.stringify(rawSchema || []);
           const adminProfit = (fee * comm) / 100;
           const operatorShare = fee - adminProfit;
 
           const [insertRes] = await pool.query(
             `INSERT INTO sub_services (service_id, name, code, fee, agent_fee, operator_share, distributor_share, admin_profit, admin_commission_percentage, form_schema, required_docs, operator_assignment_mode, created_by, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, 1, true)`,
-            [serviceId, sName, code, fee, fee, operatorShare, adminProfit, comm, schema, routingMode]
+             VALUES (?, ?, ?, ?, ?, ?, 0.00, ?, ?, ?, '[]', ?, ?, true)`,
+            [serviceId, sName, `${code}-DEFAULT`, fee, fee, operatorShare, adminProfit, comm, schema, routingMode, req.user.id]
           );
           subRows = [{ id: insertRes.insertId, name: sName }];
         } else {
@@ -191,11 +193,6 @@ export const createAssignment = async (req, res) => {
     if (routingMode === 'single') {
       areaLabel = null;
       wardNo = null;
-      // Single mode: clear previous operator assignments for this service/sub-services
-      const subIds = targetSubServices.map(s => s.id);
-      if (subIds.length > 0) {
-        await pool.query('DELETE FROM operator_assignments WHERE sub_service_id IN (?)', [subIds]);
-      }
     } else if (routingMode === 'area_wise') {
       wardNo = null;
       if (!areaLabel || !areaLabel.trim()) {
@@ -210,24 +207,47 @@ export const createAssignment = async (req, res) => {
       wardNo = String(wardNo);
     }
 
-    // Create assignments for target sub-services
+    // Single mode clear + naye assignments ek hi DB transaction me (beech me fail ho to service bina operator ke na rahe)
     let insertedCount = 0;
-    for (const sub of targetSubServices) {
-      const [existing] = await pool.query(
-        `SELECT id FROM operator_assignments 
-         WHERE operator_id = ? AND sub_service_id = ? 
-           AND (area_label <=> ?) AND (ward_no <=> ?) LIMIT 1`,
-        [operatorId, sub.id, areaLabel, wardNo]
-      );
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
 
-      if (existing.length === 0) {
-        await pool.query(
-          `INSERT INTO operator_assignments (operator_id, sub_service_id, district, area_label, ward_no, is_active) 
-           VALUES (?, ?, ?, ?, ?, true)`,
-          [operatorId, sub.id, district, areaLabel, wardNo]
-        );
-        insertedCount++;
+      if (routingMode === 'single') {
+        // Single mode: previous operator assignments clear (ek service = ek operator)
+        const subIds = targetSubServices.map(s => s.id);
+        if (subIds.length > 0) {
+          await connection.query(
+            'DELETE FROM operator_assignments WHERE sub_service_id IN (?) AND operator_id <> ?',
+            [subIds, operatorId]
+          );
+        }
       }
+
+      for (const sub of targetSubServices) {
+        const [existing] = await connection.query(
+          `SELECT id FROM operator_assignments 
+           WHERE operator_id = ? AND sub_service_id = ? 
+             AND (area_label <=> ?) AND (ward_no <=> ?) LIMIT 1`,
+          [operatorId, sub.id, areaLabel, wardNo]
+        );
+
+        if (existing.length === 0) {
+          await connection.query(
+            `INSERT INTO operator_assignments (operator_id, sub_service_id, district, area_label, ward_no, is_active) 
+             VALUES (?, ?, ?, ?, ?, true)`,
+            [operatorId, sub.id, district, areaLabel, wardNo]
+          );
+          insertedCount++;
+        }
+      }
+
+      await connection.commit();
+    } catch (txError) {
+      await connection.rollback();
+      throw txError;
+    } finally {
+      connection.release();
     }
 
     return res.status(201).json({

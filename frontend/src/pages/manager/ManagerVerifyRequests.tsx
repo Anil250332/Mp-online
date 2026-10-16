@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { shopStore, type Shop } from '../../services/shopStore';
+import { useAppDispatch, useAppSelector, selectShops, selectShopsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchShops } from '../../store/slices/shopsSlice';
+import { useKeyedAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   UserCheck,
   CheckCircle2,
@@ -10,61 +15,69 @@ import {
   Phone,
   Mail,
   Calendar,
-  Loader2
+  X
 } from 'lucide-react';
 
 export default function ManagerVerifyRequests() {
-  const [pendingShops, setPendingShops] = useState<Shop[]>([]);
+  const dispatch = useAppDispatch();
+  // Redux shops (frozen — filter naya array deta hai, mutate nahi)
+  const allShops = useAppSelector(selectShops);
+  const shopsStatus = useAppSelector(selectShopsStatus);
+  const pendingShops = useMemo(
+    () => allShops.filter(s => s.status === 'PENDING' || s.status === 'DELETE_REQUESTED'),
+    [allShops]
+  );
+  const showSkeleton = isInitialLoading(shopsStatus, allShops.length);
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const rowAction = useKeyedAsyncAction();
 
+  // Page open hote hi fresh shops fetch
   useEffect(() => {
-    const sync = () => {
-      const all = shopStore.getShops();
-      setPendingShops(all.filter(s => s.status === 'PENDING' || s.status === 'DELETE_REQUESTED'));
-    };
+    dispatch(fetchShops());
+  }, [dispatch]);
 
-    sync();
-    const unsubscribe = shopStore.subscribe(sync);
-    return unsubscribe;
-  }, []);
+  // Per-row 3-stage action; facade fail par backend message wala Error throw karta hai
+  const runRowAction = (key: string, fn: () => Promise<string>) =>
+    rowAction.run(key, async () => {
+      setErrorMsg('');
+      let message = '';
+      try {
+        message = await fn();
+      } catch (err) {
+        setErrorMsg(err instanceof Error && err.message ? err.message : 'Action failed. Please try again.');
+        throw err;
+      }
+      setSuccessMsg(message);
+      setTimeout(() => setSuccessMsg(''), 3500);
+    });
 
-  const [processingId, setProcessingId] = useState<string | number | null>(null);
+  const isRowBusy = (id: string) =>
+    rowAction.stateOf(`approve-${id}`) === 'loading' || rowAction.stateOf(`reject-${id}`) === 'loading';
 
-  const handleApprove = async (shop: Shop) => {
-    if (processingId === shop.id) return;
-    setProcessingId(shop.id);
-    try {
+  const handleApprove = (shop: Shop) =>
+    runRowAction(`approve-${shop.id}`, async () => {
       if (shop.status === 'DELETE_REQUESTED') {
         await shopStore.approveDeletion(shop.id);
-        setSuccessMsg(`Approved shop deletion request for "${shop.shopName}".`);
-      } else {
-        await shopStore.approveShop(shop.id);
-        setSuccessMsg(`Approved & activated shop "${shop.shopName}".`);
+        return `Approved shop deletion request for "${shop.shopName}".`;
       }
-      setTimeout(() => setSuccessMsg(''), 3500);
-    } finally {
-      setProcessingId(null);
-    }
-  };
+      await shopStore.approveShop(shop.id);
+      return `Approved & activated shop "${shop.shopName}".`;
+    });
 
-  const handleReject = async (shop: Shop) => {
-    if (processingId === shop.id) return;
-    setProcessingId(shop.id);
-    try {
+  const handleReject = (shop: Shop) =>
+    runRowAction(`reject-${shop.id}`, async () => {
       await shopStore.rejectShop(shop.id);
-      setSuccessMsg(`Rejected request for "${shop.shopName}".`);
-      setTimeout(() => setSuccessMsg(''), 3500);
-    } finally {
-      setProcessingId(null);
-    }
-  };
+      return `Rejected request for "${shop.shopName}".`;
+    });
 
+  const term = searchTerm.toLowerCase();
   const filtered = pendingShops.filter(s =>
-    s.shopName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.ownerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.mobile.includes(searchTerm) ||
-    s.shopCode.toLowerCase().includes(searchTerm.toLowerCase())
+    (s.shopName || '').toLowerCase().includes(term) ||
+    (s.ownerName || '').toLowerCase().includes(term) ||
+    (s.mobile || '').includes(searchTerm) ||
+    (s.shopCode || '').toLowerCase().includes(term)
   );
 
   return (
@@ -89,6 +102,17 @@ export default function ManagerVerifyRequests() {
           <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 animate-in fade-in">
             <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
             <span>{successMsg}</span>
+          </div>
+        )}
+
+        {/* Error Alert (backend message) */}
+        {errorMsg && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2">
+            <XCircle className="h-5 w-5 text-red-600 shrink-0" />
+            <span>{errorMsg}</span>
+            <button onClick={() => setErrorMsg('')} className="ml-auto text-red-400 hover:text-red-700 cursor-pointer">
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
@@ -125,7 +149,9 @@ export default function ManagerVerifyRequests() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filtered.length === 0 ? (
+                {showSkeleton ? (
+                  <SkeletonTableRows rows={4} cols={6} />
+                ) : filtered.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-slate-400 text-xs">
                       No pending verification requests found. All clear!
@@ -183,22 +209,30 @@ export default function ManagerVerifyRequests() {
 
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <button
+                          <ActionButton
+                            state={rowAction.stateOf(`reject-${shop.id}`)}
                             onClick={() => handleReject(shop)}
-                            disabled={processingId === shop.id}
+                            disabled={isRowBusy(shop.id)}
+                            loadingText="Rejecting..."
+                            successText="Rejected"
+                            errorText="Failed"
                             className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700 border border-red-200 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer"
                           >
                             <XCircle className="h-3.5 w-3.5" />
                             <span>Reject</span>
-                          </button>
-                          <button
+                          </ActionButton>
+                          <ActionButton
+                            state={rowAction.stateOf(`approve-${shop.id}`)}
                             onClick={() => handleApprove(shop)}
-                            disabled={processingId === shop.id}
+                            disabled={isRowBusy(shop.id)}
+                            loadingText="Processing..."
+                            successText="Approved!"
+                            errorText="Failed"
                             className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
                           >
-                            {processingId === shop.id ? <Loader2 className="h-3.5 w-3.5 animate-spin text-white" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                            <span>{processingId === shop.id ? 'Processing...' : 'Approve'}</span>
-                          </button>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <span>Approve</span>
+                          </ActionButton>
                         </div>
                       </td>
                     </tr>

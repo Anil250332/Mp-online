@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
-import apiClient from '../../api/client';
+import apiClient, { FILE_BASE_URL } from '../../api/client';
+import { useAsyncAction, useKeyedAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   FileCheck,
   Search,
@@ -50,26 +53,64 @@ interface ApplicationItem {
   completedAt?: string;
   shopName?: string;
   documents?: ApplicationDoc[];
-  completionOutputData?: string | { note?: string; files?: ApplicationDoc[] };
+  completionOutputData?: string | { note?: string; files?: ApplicationDoc[]; outputValues?: Record<string, unknown> };
+  subServiceFormSchema?: unknown;
+  serviceFormSchema?: unknown;
 }
+
+interface SchemaField {
+  id?: string;
+  label?: string;
+}
+
+// Form schema JSON string ya array dono ho sakta hai — safe parse
+const parseSchemaFields = (raw: unknown): SchemaField[] => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw as SchemaField[];
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+// MySQL 'YYYY-MM-DD HH:MM:SS' Safari me Invalid Date deta hai — ' ' ko 'T' se replace
+const parseDate = (value?: string): Date | null => {
+  if (!value) return null;
+  const d = new Date(String(value).replace(' ', 'T'));
+  return isNaN(d.getTime()) ? null : d;
+};
 
 export default function AgentServiceRequests() {
   const { user } = useAuth();
   const [applications, setApplications] = useState<ApplicationItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const refreshAction = useAsyncAction();
+  const downloadAction = useKeyedAsyncAction();
   const [activeTab, setActiveTab] = useState<'ALL' | 'PENDING' | 'COMPLETED' | 'REJECTED'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedApp, setSelectedApp] = useState<ApplicationItem | null>(null);
 
-  const fetchApplications = useCallback(async () => {
-    setIsLoading(true);
+  // true = success, false = fail (refresh button ke 3-stage ke liye)
+  const fetchApplications = useCallback(async (): Promise<boolean> => {
+    setLoadError('');
     try {
       const res = await apiClient.get('/applications/my-requests');
       if (res.data.status === 'success') {
-        setApplications(res.data.data);
+        setApplications(Array.isArray(res.data.data) ? res.data.data : []);
+        return true;
       }
-    } catch (e) {
+      setLoadError(res.data.message || 'Applications load nahi ho paayi.');
+      return false;
+    } catch (e: any) {
       console.error('Failed to fetch applications:', e);
+      setLoadError(e.response?.data?.message || e.message || 'Applications load nahi ho paayi.');
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -82,18 +123,32 @@ export default function AgentServiceRequests() {
   const getFileUrl = (filePath: string) => {
     if (!filePath) return '';
     if (filePath.startsWith('http') || filePath.startsWith('blob:')) return filePath;
-    return `http://localhost:5000${filePath}`;
+    return `${FILE_BASE_URL}${filePath}`;
   };
 
-  const handleDownloadFile = (filePath: string, fileName: string) => {
+  // Cross-origin URL par `download` attribute ignore hota hai — isliye blob fetch karke download
+  const handleDownloadFile = async (filePath: string, fileName: string) => {
     const url = getFileUrl(filePath);
+    if (!url) throw new Error('File path missing');
     const a = document.createElement('a');
-    a.href = url;
     a.download = fileName || 'document.pdf';
-    a.target = '_blank';
+    let objectUrl = '';
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`File download failed (${res.status})`);
+      objectUrl = URL.createObjectURL(await res.blob());
+      a.href = objectUrl;
+    } catch (e) {
+      // Blob fetch fail (CORS / network) — fallback: naye tab me kholna
+      console.warn('Blob download failed, opening in new tab:', e);
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+    }
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   };
 
   const parsedFormData = (data?: string | Record<string, any>): Record<string, any> => {
@@ -119,12 +174,25 @@ export default function AgentServiceRequests() {
 
   const getParsedCompletionOutput = (data?: string | object) => {
     if (!data) return null;
-    if (typeof data === 'object') return data as { note?: string; files?: any[] };
+    if (typeof data === 'object') return data as { note?: string; files?: any[]; outputValues?: Record<string, unknown> };
     try {
-      return JSON.parse(data) as { note?: string; files?: any[] };
+      return JSON.parse(data) as { note?: string; files?: any[]; outputValues?: Record<string, unknown> };
     } catch {
       return null;
     }
+  };
+
+  // Operator dwara bhare gaye output fields — key (field id / label) se schema label resolve
+  const getOperatorOutputRows = (app: ApplicationItem): { label: string; value: string }[] => {
+    const values = getParsedCompletionOutput(app.completionOutputData)?.outputValues;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return [];
+    const fields = [...parseSchemaFields(app.subServiceFormSchema), ...parseSchemaFields(app.serviceFormSchema)];
+    return Object.entries(values)
+      .filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+      .map(([key, v]) => {
+        const field = fields.find(f => f.id === key || f.label === key);
+        return { label: field?.label || key, value: typeof v === 'object' ? JSON.stringify(v) : String(v) };
+      });
   };
 
   const getDocumentCategories = (documents?: ApplicationDoc[], completionOutputData?: string | object) => {
@@ -230,15 +298,26 @@ export default function AgentServiceRequests() {
             </p>
           </div>
 
-          <button
-            onClick={fetchApplications}
+          <ActionButton
+            state={refreshAction.state}
+            onClick={() => refreshAction.run(fetchApplications)}
             disabled={isLoading}
+            loadingText="Refreshing..."
+            successText="Updated"
+            errorText="Failed"
             className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs cursor-pointer"
           >
-            <RefreshCw className={`h-3.5 w-3.5 text-blue-600 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className="h-3.5 w-3.5 text-blue-600" />
             <span>Refresh</span>
-          </button>
+          </ActionButton>
         </div>
+
+        {loadError && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-semibold flex items-center gap-2">
+            <XCircle className="h-4 w-4 text-red-600 shrink-0" />
+            <span>{loadError}</span>
+          </div>
+        )}
 
         {/* Filter Tabs */}
         <div className="bg-white rounded-xl border border-slate-200 p-2 shadow-xs flex flex-wrap items-center gap-2">
@@ -294,7 +373,9 @@ export default function AgentServiceRequests() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredApps.length === 0 ? (
+                {isLoading && applications.length === 0 ? (
+                  <SkeletonTableRows rows={5} cols={6} />
+                ) : filteredApps.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-slate-400 text-xs">
                       No service requests found in this filter.
@@ -323,10 +404,10 @@ export default function AgentServiceRequests() {
                         </td>
 
                         <td className="py-3.5 px-4 text-slate-600 text-xs font-medium">
-                          {new Date(app.createdAt).toLocaleString('en-IN', {
+                          {parseDate(app.createdAt)?.toLocaleString('en-IN', {
                             day: '2-digit', month: 'short', year: 'numeric',
                             hour: '2-digit', minute: '2-digit', hour12: true
-                          })}
+                          }) || '—'}
                         </td>
 
                         <td className="py-3.5 px-4 text-center">
@@ -534,13 +615,17 @@ export default function AgentServiceRequests() {
                                   <span className="text-[10px] font-bold text-slate-500 uppercase block">{doc.label}</span>
                                   <span className="font-mono text-xs font-bold text-slate-800 truncate block">{doc.fileName}</span>
                                 </div>
-                                <button
-                                  onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                                <ActionButton
+                                  state={downloadAction.stateOf(`client-${idx}-${doc.filePath}`)}
+                                  onClick={() => downloadAction.run(`client-${idx}-${doc.filePath}`, () => handleDownloadFile(doc.filePath, doc.fileName))}
+                                  loadingText="Downloading..."
+                                  successText="Downloaded"
+                                  errorText="Failed"
                                   className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
                                 >
                                   <Download className="h-3.5 w-3.5" />
                                   <span>Download</span>
-                                </button>
+                                </ActionButton>
                               </div>
                             ))}
                           </div>
@@ -552,7 +637,8 @@ export default function AgentServiceRequests() {
                   {(() => {
                   const { operatorDocs } = getDocumentCategories(selectedApp.documents, selectedApp.completionOutputData);
                   const opNote = getOperatorNote(selectedApp.completionOutputData);
-                  if (!opNote && operatorDocs.length === 0) return null;
+                  const outputRows = getOperatorOutputRows(selectedApp);
+                  if (!opNote && operatorDocs.length === 0 && outputRows.length === 0) return null;
 
                   return (
                     <div className="bg-teal-50/80 p-4 rounded-2xl border border-teal-200/80 space-y-3">
@@ -570,6 +656,22 @@ export default function AgentServiceRequests() {
                         </div>
                       )}
 
+                      {outputRows.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-bold text-teal-800 uppercase block">
+                            🧾 Operator Output Details ({outputRows.length})
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {outputRows.map((row, idx) => (
+                              <div key={idx} className="bg-white p-3 rounded-xl border border-teal-200/80">
+                                <span className="text-[10px] font-bold text-teal-700 uppercase block">{row.label}</span>
+                                <span className="font-semibold text-slate-900 break-words">{row.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {operatorDocs.length > 0 && (
                         <div className="space-y-2">
                           <span className="text-[10px] font-bold text-teal-800 uppercase block">
@@ -581,13 +683,17 @@ export default function AgentServiceRequests() {
                                 <span className="text-[10px] font-bold text-teal-700 uppercase block">{doc.label}</span>
                                 <span className="font-mono text-xs font-bold text-slate-900 truncate block">{doc.fileName}</span>
                               </div>
-                              <button
-                                onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                              <ActionButton
+                                state={downloadAction.stateOf(`op-${idx}-${doc.filePath}`)}
+                                onClick={() => downloadAction.run(`op-${idx}-${doc.filePath}`, () => handleDownloadFile(doc.filePath, doc.fileName))}
+                                loadingText="Downloading..."
+                                successText="Downloaded"
+                                errorText="Failed"
                                 className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors shadow-xs"
                               >
                                 <Download className="h-3.5 w-3.5" />
                                 <span>Download Deliverable</span>
-                              </button>
+                              </ActionButton>
                             </div>
                           ))}
                         </div>

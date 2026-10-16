@@ -1,7 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import { complaintStore, type ComplaintTicket } from '../../services/complaintStore';
+import { useAppDispatch, useAppSelector, selectComplaints, selectComplaintsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchComplaints, sortComplaints } from '../../store/slices/complaintsSlice';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonCards } from '../../components/ui/Skeleton';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import {
   Headphones,
   PlusCircle,
@@ -13,13 +18,14 @@ import {
   Tag,
   Calendar,
   Eye,
-  FileText,
-  Loader2
+  FileText
 } from 'lucide-react';
 
 export default function DistributorComplaint() {
   const { user } = useAuth();
-  const [complaints, setComplaints] = useState<ComplaintTicket[]>([]);
+  const dispatch = useAppDispatch();
+  const allComplaints = useAppSelector(selectComplaints);
+  const complaintsStatus = useAppSelector(selectComplaintsStatus);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewTicket, setViewTicket] = useState<ComplaintTicket | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,22 +37,22 @@ export default function DistributorComplaint() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Sync with central store
+  // Backend non-admin ko sirf apne tickets bhejta hai; yahan bhi userId se filter (agent / operator / distributor sab)
+  const complaints = useMemo<ComplaintTicket[]>(() => {
+    const uId = user?.id?.toString();
+    if (!uId) return [];
+    return allComplaints.filter(c => c.raisedByUserId?.toString() === uId);
+  }, [allComplaints, user?.id]);
+  const isTicketsLoading = isInitialLoading(complaintsStatus, complaints.length);
+
   useEffect(() => {
-    const syncTickets = () => {
-      setComplaints(complaintStore.getComplaintsForUser(user?.id, user?.mobile, user?.full_name));
-    };
-    syncTickets();
-    const unsubscribe = complaintStore.subscribe(syncTickets);
-    return unsubscribe;
-  }, [user?.id, user?.mobile, user?.full_name]);
+    dispatch(fetchComplaints());
+  }, [dispatch]);
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitAction = useAsyncAction();
 
-  const handleSubmitComplaint = async (e: React.FormEvent) => {
+  const handleSubmitComplaint = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
-
     setErrorMsg('');
 
     if (!subject.trim() || !description.trim()) {
@@ -54,46 +60,39 @@ export default function DistributorComplaint() {
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const newTicket = await complaintStore.addComplaint({
-        raisedByUserId: user?.id || user?.mobile || '8888888888',
-        raisedByName: user?.full_name || 'Portal User',
-        raisedByRole: (user?.role as any) || 'agent',
-        subject,
-        category,
-        description
-      });
+    submitAction.run(async () => {
+      try {
+        // Server fail hone par addComplaint throw karta hai (koi fake offline ticket nahi)
+        const newTicket = await complaintStore.addComplaint({
+          raisedByUserId: user?.id,
+          raisedByName: user?.full_name || 'Portal User',
+          raisedByRole: (user?.role as any) || 'agent',
+          subject,
+          category,
+          description
+        });
 
-      setSuccessMsg(`Complaint Ticket "${newTicket.ticketNo}" raised successfully! Our support team will review it.`);
-      setSubject('');
-      setDescription('');
-      setTimeout(() => {
-        setIsModalOpen(false);
-        setSuccessMsg('');
-      }, 2000);
-    } finally {
-      setIsSubmitting(false);
-    }
+        setSuccessMsg(`Complaint Ticket "${newTicket.ticketNo}" raised successfully! Our support team will review it.`);
+        setSubject('');
+        setDescription('');
+        setTimeout(() => {
+          setIsModalOpen(false);
+          setSuccessMsg('');
+        }, 2000);
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : 'Complaint submit failed. Kripya dobara try karein.');
+        throw err;
+      }
+    });
   };
 
-  const priorityMap: Record<string, number> = {
-    OPEN: 1,
-    IN_REVIEW: 2,
-    RESOLVED: 3,
-    CLOSED: 4
-  };
-
-  const filteredComplaints = complaints.filter(c =>
-    c.ticketNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.category.toLowerCase().includes(searchTerm.toLowerCase())
-  ).sort((a, b) => {
-    const pA = priorityMap[a.status?.toUpperCase() || ''] || 5;
-    const pB = priorityMap[b.status?.toUpperCase() || ''] || 5;
-    if (pA !== pB) return pA - pB;
-    return (b.id || '').localeCompare(a.id || '');
-  });
+  // OPEN pehle, phir naya ticket upar (sortComplaints copy return karta hai)
+  const term = searchTerm.toLowerCase();
+  const filteredComplaints = sortComplaints(complaints.filter(c =>
+    (c.ticketNo || '').toLowerCase().includes(term) ||
+    (c.subject || '').toLowerCase().includes(term) ||
+    (c.category || '').toLowerCase().includes(term)
+  ));
 
   const getPortalTitle = () => {
     if (user?.role === 'agent') return 'Shop / Retailer Helpdesk & Complaint Portal';
@@ -118,7 +117,10 @@ export default function DistributorComplaint() {
           </div>
 
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              setErrorMsg('');
+              setIsModalOpen(true);
+            }}
             className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
           >
             <PlusCircle className="h-4 w-4" />
@@ -159,7 +161,9 @@ export default function DistributorComplaint() {
             </h2>
           </div>
 
-          {filteredComplaints.length === 0 ? (
+          {isTicketsLoading ? (
+            <SkeletonCards count={3} />
+          ) : filteredComplaints.length === 0 ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400 text-xs sm:text-sm shadow-xs">
               <Headphones className="h-10 w-10 text-slate-300 mx-auto mb-3" />
               <p className="font-semibold text-slate-600">No support tickets found.</p>
@@ -207,7 +211,7 @@ export default function DistributorComplaint() {
                         ) : (
                           <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
                         )}
-                        <span>{item.status.replace('_', ' ')}</span>
+                        <span>{(item.status || '').replace('_', ' ')}</span>
                       </span>
                     </div>
 
@@ -285,7 +289,7 @@ export default function DistributorComplaint() {
                       ? 'bg-amber-50 text-amber-700 border-amber-200'
                       : 'bg-red-50 text-red-700 border-red-200'
                   }`}>
-                    {viewTicket.status.replace('_', ' ')}
+                    {(viewTicket.status || '').replace('_', ' ')}
                   </span>
                 </div>
 
@@ -424,20 +428,16 @@ export default function DistributorComplaint() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={isSubmitting}
+                    state={submitAction.state}
+                    loadingText="Submitting..."
+                    successText="Ticket Raised!"
+                    errorText="Failed"
                     className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 min-w-[130px]"
                   >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin text-white" />
-                        <span>Submitting...</span>
-                      </>
-                    ) : (
-                      <span>Submit Ticket</span>
-                    )}
-                  </button>
+                    <span>Submit Ticket</span>
+                  </ActionButton>
                 </div>
 
               </form>

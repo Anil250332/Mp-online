@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import apiClient from '../../api/client';
+import apiClient, { FILE_BASE_URL } from '../../api/client';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonCards } from '../../components/ui/Skeleton';
+import { getApiErrorMessage } from '../../store/apiError';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -45,8 +49,42 @@ interface ApplicationItem {
   agentName?: string;
   shopName?: string;
   documents?: ApplicationDoc[];
-  completionOutputData?: string | { note?: string; files?: ApplicationDoc[] };
+  completionOutputData?: string | CompletionOutput;
+  subServiceFormSchema?: unknown;
+  serviceFormSchema?: unknown;
 }
+
+interface CompletionOutput {
+  note?: string;
+  files?: ApplicationDoc[];
+  outputValues?: Record<string, unknown>;
+}
+
+// MySQL 'YYYY-MM-DD HH:MM:SS' Safari me Invalid Date deta hai — ' ' ko 'T' se replace karke parse
+const formatDateTime = (value?: string): string => {
+  if (!value) return '-';
+  const d = new Date(String(value).replace(' ', 'T'));
+  return isNaN(d.getTime()) ? String(value) : d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+// form_schema JSON string / array / { formFields: [] } kuch bhi ho sakta hai — safe parse
+const parseSchemaFields = (schema: unknown): { id?: string; label?: string }[] => {
+  let parsed: unknown = schema;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(parsed)) return parsed.filter(f => f && typeof f === 'object');
+  if (parsed && typeof parsed === 'object') {
+    const obj = parsed as { formFields?: unknown; fields?: unknown };
+    const list = Array.isArray(obj.formFields) ? obj.formFields : Array.isArray(obj.fields) ? obj.fields : [];
+    return list.filter(f => f && typeof f === 'object');
+  }
+  return [];
+};
 
 export default function AdminTaskVerification() {
   const [tasks, setTasks] = useState<ApplicationItem[]>([]);
@@ -57,11 +95,16 @@ export default function AdminTaskVerification() {
   const [viewModalTask, setViewModalTask] = useState<ApplicationItem | null>(null);
   const [rejectModalTask, setRejectModalTask] = useState<ApplicationItem | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  // Skeleton sirf pehli baar load par
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const verifyAction = useAsyncAction();
+  const rejectAction = useAsyncAction();
 
   const fetchVerificationQueue = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await apiClient.get('/applications/verification-queue');
+      const res = await apiClient.get('/applications/verification-queue', { params: { limit: 1000 } });
       if (res.data.status === 'success') {
         setTasks(res.data.data);
       }
@@ -69,8 +112,15 @@ export default function AdminTaskVerification() {
       console.error('Failed to fetch verification queue:', e);
     } finally {
       setIsLoading(false);
+      setHasLoaded(true);
     }
   }, []);
+
+  // Reject modal band karte waqt purana reason clear karna zaroori hai
+  const closeRejectModal = () => {
+    setRejectModalTask(null);
+    setRejectReason('');
+  };
 
   useEffect(() => {
     fetchVerificationQueue();
@@ -79,7 +129,7 @@ export default function AdminTaskVerification() {
   const getFileUrl = (filePath: string) => {
     if (!filePath) return '';
     if (filePath.startsWith('http') || filePath.startsWith('blob:')) return filePath;
-    return `http://localhost:5000${filePath}`;
+    return `${FILE_BASE_URL}${filePath}`;
   };
 
   const handleDownloadFile = (filePath: string, fileName: string) => {
@@ -116,12 +166,26 @@ export default function AdminTaskVerification() {
 
   const getParsedCompletionOutput = (data?: string | object) => {
     if (!data) return null;
-    if (typeof data === 'object') return data as { note?: string; files?: any[] };
+    if (typeof data === 'object') return data as CompletionOutput;
     try {
-      return JSON.parse(data) as { note?: string; files?: any[] };
+      return JSON.parse(data) as CompletionOutput;
     } catch {
       return null;
     }
+  };
+
+  // Operator dwara bhare gaye output fields — key (field id / label) se schema label resolve
+  const getOperatorOutputRows = (task: ApplicationItem): { label: string; value: string }[] => {
+    const output = getParsedCompletionOutput(task.completionOutputData);
+    const values = output?.outputValues;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return [];
+    const fields = [...parseSchemaFields(task.subServiceFormSchema), ...parseSchemaFields(task.serviceFormSchema)];
+    return Object.entries(values)
+      .filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+      .map(([key, v]) => {
+        const field = fields.find(f => f.id === key || f.label === key);
+        return { label: field?.label || key, value: typeof v === 'object' ? JSON.stringify(v) : String(v) };
+      });
   };
 
   const getDocumentCategories = (documents?: ApplicationDoc[], completionOutputData?: string | object) => {
@@ -179,40 +243,45 @@ export default function AdminTaskVerification() {
     return true;
   };
 
-  const handleVerify = async (task: ApplicationItem) => {
-    try {
-      const res = await apiClient.patch(`/applications/${task.id}/verify`);
-      if (res.data.status === 'success') {
-        setSuccessMsg(`Task "${task.applicationNo}" verified & confirmed! ₹${Number(task.operatorPayout || 0).toFixed(2)} credited to operator wallet.`);
-        setViewModalTask(null);
-        await fetchVerificationQueue();
-        setTimeout(() => setSuccessMsg(''), 5000);
+  // 3-stage button (useAsyncAction) double-click / duplicate request khud rokta hai
+  const handleVerify = (task: ApplicationItem) =>
+    verifyAction.run(async () => {
+      setErrorMsg('');
+      try {
+        const res = await apiClient.patch(`/applications/${task.id}/verify`);
+        if (res.data.status !== 'success') throw new Error(res.data.message || 'Failed to verify task.');
+      } catch (err) {
+        setErrorMsg(getApiErrorMessage(err, 'Failed to verify task.'));
+        throw err;
       }
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to verify task.');
-    }
-  };
+      setSuccessMsg(`Task "${task.applicationNo}" verified & confirmed! ₹${Number(task.operatorPayout || 0).toFixed(2)} credited to operator wallet.`);
+      setViewModalTask(null);
+      await fetchVerificationQueue();
+      setTimeout(() => setSuccessMsg(''), 5000);
+    });
 
-  const handleReject = async (e: React.FormEvent) => {
+  const handleReject = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rejectModalTask) return;
+    const task = rejectModalTask;
+    if (!task) return;
 
-    try {
-      const res = await apiClient.patch(`/applications/${rejectModalTask.id}/reject`, {
-        reason: rejectReason || 'Rejected by Admin during verification'
-      });
-
-      if (res.data.status === 'success') {
-        setSuccessMsg(`Task "${rejectModalTask.applicationNo}" REJECTED & fee refunded back to agent wallet.`);
-        setRejectModalTask(null);
-        setViewModalTask(null);
-        setRejectReason('');
-        await fetchVerificationQueue();
-        setTimeout(() => setSuccessMsg(''), 5000);
+    rejectAction.run(async () => {
+      setErrorMsg('');
+      try {
+        const res = await apiClient.patch(`/applications/${task.id}/reject`, {
+          reason: rejectReason || 'Rejected by Admin during verification'
+        });
+        if (res.data.status !== 'success') throw new Error(res.data.message || 'Failed to reject task.');
+      } catch (err) {
+        setErrorMsg(getApiErrorMessage(err, 'Failed to reject task.'));
+        throw err;
       }
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to reject task.');
-    }
+      setSuccessMsg(`Task "${task.applicationNo}" REJECTED & fee refunded back to agent wallet.`);
+      closeRejectModal();
+      setViewModalTask(null);
+      await fetchVerificationQueue();
+      setTimeout(() => setSuccessMsg(''), 5000);
+    });
   };
 
   const filtered = tasks.filter(t => {
@@ -279,6 +348,14 @@ export default function AdminTaskVerification() {
           </div>
         )}
 
+        {/* Error Alert (backend message) */}
+        {errorMsg && !viewModalTask && !rejectModalTask && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2">
+            <XCircle className="h-5 w-5 text-red-600 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* Filter Tabs */}
         <div className="bg-white rounded-xl border border-slate-200 p-2 shadow-xs flex flex-wrap items-center gap-2">
           <button
@@ -340,7 +417,9 @@ export default function AdminTaskVerification() {
           </div>
 
           <div className="p-4 sm:p-5 space-y-3 bg-slate-50/50">
-            {filtered.length === 0 ? (
+            {!hasLoaded && tasks.length === 0 ? (
+              <SkeletonCards count={3} />
+            ) : filtered.length === 0 ? (
               <div className="p-10 text-center space-y-3 bg-white rounded-2xl border border-dashed border-slate-200">
                 <p className="text-slate-500 text-xs sm:text-sm font-medium">
                   {activeFilter === 'COMPLETED'
@@ -442,7 +521,7 @@ export default function AdminTaskVerification() {
                     {/* Bottom Row */}
                     <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
                       <div className="text-slate-400 text-[11px]">
-                        Applied: {new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                        Applied: {formatDateTime(item.createdAt)}
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -481,7 +560,7 @@ export default function AdminTaskVerification() {
                   </div>
                 </div>
 
-                <button onClick={() => setViewModalTask(null)} className="text-slate-400 hover:text-slate-700 p-2 rounded-xl">
+                <button onClick={() => { setViewModalTask(null); setErrorMsg(''); }} className="text-slate-400 hover:text-slate-700 p-2 rounded-xl">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -557,6 +636,27 @@ export default function AdminTaskVerification() {
                   );
                 })()}
 
+                {/* 1b. Operator dwara bhare gaye output fields */}
+                {(() => {
+                  const outputRows = getOperatorOutputRows(viewModalTask);
+                  if (outputRows.length === 0) return null;
+                  return (
+                    <div className="space-y-2 bg-indigo-50/60 p-4 rounded-2xl border border-indigo-200/80">
+                      <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider block">
+                        Operator Output Details
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {outputRows.map((row, idx) => (
+                          <div key={`${row.label}-${idx}`} className="bg-white p-3 rounded-xl border border-indigo-200/60 space-y-0.5">
+                            <span className="text-[10px] font-bold text-indigo-500 uppercase block">{row.label}</span>
+                            <span className="text-xs font-semibold text-slate-900 break-words">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* 2. Applicant Submission Details & Proof Documents */}
                 {(() => {
                   const { clientDocs } = getDocumentCategories(viewModalTask.documents, viewModalTask.completionOutputData);
@@ -615,20 +715,31 @@ export default function AdminTaskVerification() {
 
               </div>
 
+              {errorMsg && !rejectModalTask && (
+                <div className="mx-6 mb-3 p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-semibold flex items-center gap-2 shrink-0">
+                  <XCircle className="h-4 w-4 text-red-600 shrink-0" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
               {/* Modal Footer */}
               <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setViewModalTask(null)}
+                  onClick={() => { setViewModalTask(null); setErrorMsg(''); }}
                   className="px-4.5 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 transition-colors cursor-pointer"
                 >
                   Close
                 </button>
 
                 <div className="flex items-center gap-2">
+                  {/* Reject sirf open / completed (payout se pehle) task par — verified/rejected par nahi */}
+                  {!['verified', 'rejected'].includes(viewModalTask.status?.toLowerCase()) && (
                   <button
                     onClick={() => {
                       const t = viewModalTask;
+                      setErrorMsg('');
+                      setRejectReason('');
                       setRejectModalTask(t);
                     }}
                     className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
@@ -636,15 +747,22 @@ export default function AdminTaskVerification() {
                     <XCircle className="h-4 w-4 text-red-600" />
                     <span>Reject & Refund Agent</span>
                   </button>
+                  )}
 
-                  {viewModalTask.status?.toLowerCase() !== 'verified' && (
-                    <button
+                  {/* Payout sirf operator dwara completed task par */}
+                  {viewModalTask.status?.toLowerCase() === 'completed' && (
+                    <ActionButton
+                      state={verifyAction.state}
                       onClick={() => handleVerify(viewModalTask)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-xl text-xs shadow-md flex items-center gap-1.5 cursor-pointer"
+                      disabled={rejectAction.isLoading}
+                      loadingText="Releasing Payout..."
+                      successText="Payout Released!"
+                      errorText="Verification Failed"
+                      className="disabled:opacity-60 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-xl text-xs shadow-md flex items-center gap-1.5 cursor-pointer"
                     >
                       <ShieldCheck className="h-4 w-4" />
                       <span>Approve & Release Payout</span>
-                    </button>
+                    </ActionButton>
                   )}
                 </div>
               </div>
@@ -662,7 +780,7 @@ export default function AdminTaskVerification() {
                   <XCircle className="h-5 w-5 text-red-600" />
                   <span>Reject Task & Refund Agent Wallet</span>
                 </div>
-                <button onClick={() => setRejectModalTask(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                <button onClick={closeRejectModal} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -671,6 +789,10 @@ export default function AdminTaskVerification() {
                 <div>App No: <strong className="font-mono text-slate-800">{rejectModalTask.applicationNo}</strong></div>
                 <div>Refund Amount to Agent: <strong className="font-mono font-bold text-emerald-700">₹ {Number(rejectModalTask.feeDeducted || 0).toFixed(2)}</strong></div>
               </div>
+
+              {errorMsg && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-semibold">{errorMsg}</div>
+              )}
 
               <form onSubmit={handleReject} className="space-y-4">
                 <div>
@@ -690,18 +812,23 @@ export default function AdminTaskVerification() {
                 <div className="pt-2 flex justify-end gap-3">
                   <button
                     type="button"
-                    onClick={() => setRejectModalTask(null)}
+                    onClick={closeRejectModal}
                     className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50"
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    className="px-4.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5"
+                    state={rejectAction.state}
+                    disabled={verifyAction.isLoading}
+                    loadingText="Rejecting..."
+                    successText="Rejected & Refunded"
+                    errorText="Rejection Failed"
+                    className="disabled:opacity-60 disabled:cursor-not-allowed px-4.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5"
                   >
                     <XCircle className="h-4 w-4" />
                     <span>Confirm Rejection & Refund</span>
-                  </button>
+                  </ActionButton>
                 </div>
               </form>
             </div>

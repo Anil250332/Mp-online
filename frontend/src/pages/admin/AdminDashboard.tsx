@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import apiClient from '../../api/client';
+import { SkeletonStatCards, SkeletonTable } from '../../components/ui/Skeleton';
 import {
   CreditCard,
   Users,
@@ -21,6 +22,8 @@ export const AdminDashboard: React.FC = () => {
   const [recentApplications, setRecentApplications] = useState<any[]>([]);
   const [servicesCount, setServicesCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  // Skeleton sirf pehli load par (refresh par purana data dikhta rahe)
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const fetchDashboardData = useCallback(async () => {
     setIsLoading(true);
@@ -42,14 +45,15 @@ export const AdminDashboard: React.FC = () => {
       if (queueRes.data?.status === 'success' || Array.isArray(queueRes.data?.data)) {
         const apps = queueRes.data.data || [];
         setRecentApplications(apps.slice(0, 6));
-        setPendingTasksCount(apps.filter((a: any) => a.status === 'completed' || a.status === 'processing' || a.status === 'pending').length);
+        // "Awaiting Payout Approval" = sirf operator dwara completed tasks (TaskVerification page jaisa)
+        setPendingTasksCount(apps.filter((a: any) => String(a.status).toLowerCase() === 'completed').length);
       }
 
       // 3. Fetch Withdrawal Requests
       const withdrawRes = await apiClient.get('/wallet/withdrawals').catch(() => ({ data: { data: [] } }));
       if (withdrawRes.data?.status === 'success' || Array.isArray(withdrawRes.data?.data)) {
         const wList = withdrawRes.data.data || [];
-        setPendingWithdrawalsCount(wList.filter((w: any) => w.status === 'pending').length);
+        setPendingWithdrawalsCount(wList.filter((w: any) => String(w.status).toLowerCase() === 'pending').length);
       }
 
       // 4. Fetch Services
@@ -61,6 +65,7 @@ export const AdminDashboard: React.FC = () => {
       console.error('Failed to load admin dashboard data:', e);
     } finally {
       setIsLoading(false);
+      setHasLoaded(true);
     }
   }, []);
 
@@ -114,6 +119,9 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         {/* Real-time KPI Stat Cards */}
+        {!hasLoaded ? (
+          <SkeletonStatCards count={4} />
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           
           {/* Total Onboarded Users */}
@@ -185,6 +193,7 @@ export const AdminDashboard: React.FC = () => {
           </Link>
 
         </div>
+        )}
 
         {/* Recent Applications Feed */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-4">
@@ -204,7 +213,9 @@ export const AdminDashboard: React.FC = () => {
             </Link>
           </div>
 
-          {recentApplications.length === 0 ? (
+          {!hasLoaded ? (
+            <SkeletonTable rows={4} cols={6} />
+          ) : recentApplications.length === 0 ? (
             <div className="py-8 text-center text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
               No recent applications recorded yet.
             </div>

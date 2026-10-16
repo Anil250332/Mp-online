@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { shopStore } from '../../services/shopStore';
 import type { Shop } from '../../services/shopStore';
+import { useAppDispatch, useAppSelector, selectShops, selectShopsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchShops } from '../../store/slices/shopsSlice';
+import { useAsyncAction, useKeyedAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   Store,
   CheckCircle2,
@@ -12,8 +17,7 @@ import {
   Mail,
   PlusCircle,
   X,
-  AlertTriangle,
-  Loader2
+  AlertTriangle
 } from 'lucide-react';
 
 const formatDateTime = (dateStr?: string) => {
@@ -22,7 +26,8 @@ const formatDateTime = (dateStr?: string) => {
     return dateStr;
   }
   try {
-    const d = new Date(dateStr);
+    // Safari ke liye 'YYYY-MM-DD HH:MM:SS' -> ISO 'T' format
+    const d = new Date(dateStr.replace(' ', 'T'));
     if (isNaN(d.getTime())) return dateStr;
     return d.toLocaleString('en-IN', {
       day: '2-digit',
@@ -38,14 +43,20 @@ const formatDateTime = (dateStr?: string) => {
 };
 
 export default function AdminShops() {
-  const [shops, setShops] = useState<Shop[]>([]);
+  const dispatch = useAppDispatch();
+  // Redux shops list (frozen — mutate nahi karna)
+  const shops = useAppSelector(selectShops);
+  const shopsStatus = useAppSelector(selectShopsStatus);
+  const showSkeleton = isInitialLoading(shopsStatus, shops.length);
+  const [errorMsg, setErrorMsg] = useState('');
+  const rowAction = useKeyedAsyncAction();
+  const addAction = useAsyncAction();
   const [activeTab, setActiveTab] = useState<'ALL' | 'APPROVED' | 'PENDING' | 'DELETE_REQUESTS'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
   // Add Shop Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [addForm, setAddForm] = useState({
     shopName: '',
@@ -57,15 +68,10 @@ export default function AdminShops() {
     password: ''
   });
 
+  // Page open hote hi fresh shop list
   useEffect(() => {
-    const updateShops = () => {
-      setShops(shopStore.getShops());
-    };
-
-    updateShops();
-    const unsubscribe = shopStore.subscribe(updateShops);
-    return unsubscribe;
-  }, []);
+    dispatch(fetchShops());
+  }, [dispatch]);
 
   // Filtered Shops per Tab
   const getTabShops = () => {
@@ -82,58 +88,53 @@ export default function AdminShops() {
     }
   };
 
+  const term = searchTerm.toLowerCase();
   const filteredShops = getTabShops().filter(s =>
-    s.shopName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.ownerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.mobile.includes(searchTerm) ||
-    s.shopCode.toLowerCase().includes(searchTerm.toLowerCase())
+    (s.shopName || '').toLowerCase().includes(term) ||
+    (s.ownerName || '').toLowerCase().includes(term) ||
+    (s.mobile || '').includes(searchTerm) ||
+    (s.shopCode || '').toLowerCase().includes(term)
   );
 
-  const [processingId, setProcessingId] = useState<string | number | null>(null);
+  // Per-row 3-stage action — facade fail hone par backend message ke saath Error throw karta hai
+  const runShopAction = (key: string, fn: () => Promise<void>, successText: string, fallback: string) =>
+    rowAction.run(key, async () => {
+      setErrorMsg('');
+      try {
+        await fn();
+      } catch (err) {
+        setErrorMsg(err instanceof Error && err.message ? err.message : fallback);
+        throw err;
+      }
+      setSuccessMsg(successText);
+      setTimeout(() => setSuccessMsg(''), 3000);
+    });
+
+  // Ek row par koi action chal raha ho to us row ke baaki buttons disable
+  const isRowBusy = (id: string) =>
+    ['approve', 'reject', 'delete', 'deactivate', 'activate'].some(k => rowAction.stateOf(`${k}-${id}`) === 'loading');
 
   // Handlers
-  const handleApprovePending = async (shop: Shop) => {
-    if (processingId === shop.id) return;
-    setProcessingId(shop.id);
-    try {
-      await shopStore.approveShop(shop.id);
-      setSuccessMsg(`Shop "${shop.shopName}" approved & activated!`);
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } finally {
-      setProcessingId(null);
-    }
-  };
+  const handleApprovePending = (shop: Shop, key = `approve-${shop.id}`) =>
+    runShopAction(key, () => shopStore.approveShop(shop.id), `Shop "${shop.shopName}" approved & activated!`, 'Failed to approve shop.');
 
-  const handleApproveDeletion = async (shop: Shop) => {
-    if (processingId === shop.id) return;
-    setProcessingId(shop.id);
-    try {
-      await shopStore.approveDeletion(shop.id);
-      setSuccessMsg(`Deletion approved for "${shop.shopName}". Shop deactivated & login blocked!`);
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } finally {
-      setProcessingId(null);
-    }
-  };
+  const handleApproveDeletion = (shop: Shop) =>
+    runShopAction(
+      `delete-${shop.id}`,
+      () => shopStore.approveDeletion(shop.id),
+      `Deletion approved for "${shop.shopName}". Shop deactivated & login blocked!`,
+      'Failed to approve deletion.'
+    );
 
-  const handleRejectPending = async (shop: Shop) => {
-    if (processingId === shop.id) return;
-    setProcessingId(shop.id);
-    try {
-      await shopStore.rejectShop(shop.id);
-      setSuccessMsg(`Registration request for "${shop.shopName}" rejected.`);
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } finally {
-      setProcessingId(null);
-    }
-  };
+  const handleRejectPending = (shop: Shop, key = `reject-${shop.id}`) =>
+    runShopAction(key, () => shopStore.rejectShop(shop.id), `Registration request for "${shop.shopName}" rejected.`, 'Failed to reject shop.');
 
   const handleAddShopSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
-    if (!addForm.shopName.trim() || !addForm.ownerName.trim() || !addForm.mobile.trim() || !addForm.password.trim()) {
-      setFormError('Please fill in all mandatory fields (Shop Name, Owner Name, Mobile, Password).');
+    if (!addForm.shopName.trim() || !addForm.ownerName.trim() || !addForm.mobile.trim() || !addForm.address.trim() || !addForm.password.trim()) {
+      setFormError('Please fill in all mandatory fields (Shop Name, Owner Name, Mobile, Address, Password).');
       return;
     }
 
@@ -142,9 +143,9 @@ export default function AdminShops() {
       return;
     }
 
-    try {
-      setFormLoading(true);
-      await shopStore.addActiveShopByDistributor({
+    addAction.run(async () => {
+      try {
+        await shopStore.addActiveShopByDistributor({
         shopName: addForm.shopName,
         ownerName: addForm.ownerName,
         mobile: addForm.mobile,
@@ -152,7 +153,11 @@ export default function AdminShops() {
         aadhaar: addForm.aadhaar,
         address: addForm.address,
         password: addForm.password
-      });
+        });
+      } catch (err) {
+        setFormError(err instanceof Error && err.message ? err.message : 'Failed to add shop. Please try again.');
+        throw err;
+      }
 
       setSuccessMsg(`New Shop "${addForm.shopName}" added and activated successfully!`);
       setIsAddModalOpen(false);
@@ -166,11 +171,7 @@ export default function AdminShops() {
         password: ''
       });
       setTimeout(() => setSuccessMsg(''), 4000);
-    } catch (err: any) {
-      setFormError(err.message || 'Failed to add shop. Please try again.');
-    } finally {
-      setFormLoading(false);
-    }
+    });
   };
 
   return (
@@ -206,6 +207,16 @@ export default function AdminShops() {
           <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 animate-in fade-in">
             <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
             <span>{successMsg}</span>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+            <span>{errorMsg}</span>
+            <button onClick={() => setErrorMsg('')} className="ml-auto text-red-400 hover:text-red-700 cursor-pointer">
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
@@ -292,7 +303,9 @@ export default function AdminShops() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredShops.length === 0 ? (
+                {showSkeleton ? (
+                  <SkeletonTableRows rows={5} cols={7} />
+                ) : filteredShops.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-12 text-center text-slate-400 text-xs">
                       No shops found in this category.
@@ -352,46 +365,62 @@ export default function AdminShops() {
                         {/* Actions for PENDING Tab */}
                         {shop.status === 'PENDING' && (
                           <div className="flex items-center justify-end gap-1.5">
-                            <button
+                            <ActionButton
+                              state={rowAction.stateOf(`reject-${shop.id}`)}
                               onClick={() => handleRejectPending(shop)}
-                              disabled={processingId === shop.id}
+                              disabled={isRowBusy(shop.id)}
+                              loadingText="Rejecting..."
+                              successText="Rejected"
+                              errorText="Failed"
                               className="bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 px-2.5 py-1 rounded-lg text-xs font-bold"
                             >
                               Reject
-                            </button>
-                            <button
+                            </ActionButton>
+                            <ActionButton
+                              state={rowAction.stateOf(`approve-${shop.id}`)}
                               onClick={() => handleApprovePending(shop)}
-                              disabled={processingId === shop.id}
+                              disabled={isRowBusy(shop.id)}
+                              loadingText="Approving..."
+                              successText="Approved!"
+                              errorText="Failed"
                               className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1"
                             >
-                              {processingId === shop.id && <Loader2 className="h-3 w-3 animate-spin text-white" />}
-                              <span>{processingId === shop.id ? 'Approving...' : 'Approve & Activate'}</span>
-                            </button>
+                              <span>Approve & Activate</span>
+                            </ActionButton>
                           </div>
                         )}
 
                         {/* Actions for DELETE_REQUESTED Tab */}
                         {shop.status === 'DELETE_REQUESTED' && (
-                          <button
+                          <ActionButton
+                            state={rowAction.stateOf(`delete-${shop.id}`)}
                             onClick={() => handleApproveDeletion(shop)}
-                            disabled={processingId === shop.id}
+                            disabled={isRowBusy(shop.id)}
+                            loadingText="Deactivating..."
+                            successText="Deactivated"
+                            errorText="Failed"
                             className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 justify-end ml-auto"
                           >
-                            {processingId === shop.id ? <Loader2 className="h-3.5 w-3.5 animate-spin text-white" /> : <Trash2 className="h-3.5 w-3.5" />}
-                            <span>{processingId === shop.id ? 'Deactivating...' : 'Approve Deletion (Deactivate Shop)'}</span>
-                          </button>
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>Approve Deletion (Deactivate Shop)</span>
+                          </ActionButton>
                         )}
 
                         {/* Status label & actions for ACTIVE */}
                         {shop.status === 'ACTIVE' && (
                           <div className="flex items-center justify-end gap-2">
                             <span className="text-[11px] font-semibold text-emerald-600">Operational</span>
-                            <button
-                              onClick={() => handleRejectPending(shop)}
+                            <ActionButton
+                              state={rowAction.stateOf(`deactivate-${shop.id}`)}
+                              onClick={() => handleRejectPending(shop, `deactivate-${shop.id}`)}
+                              disabled={isRowBusy(shop.id)}
+                              loadingText="Deactivating..."
+                              successText="Deactivated"
+                              errorText="Failed"
                               className="bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1 rounded-lg text-xs font-bold border border-red-200 transition-colors"
                             >
                               Deactivate
-                            </button>
+                            </ActionButton>
                           </div>
                         )}
 
@@ -399,12 +428,17 @@ export default function AdminShops() {
                         {shop.status === 'INACTIVE' && (
                           <div className="flex items-center justify-end gap-2">
                             <span className="text-[11px] font-semibold text-slate-400">Login Blocked</span>
-                            <button
-                              onClick={() => handleApprovePending(shop)}
+                            <ActionButton
+                              state={rowAction.stateOf(`activate-${shop.id}`)}
+                              onClick={() => handleApprovePending(shop, `activate-${shop.id}`)}
+                              disabled={isRowBusy(shop.id)}
+                              loadingText="Activating..."
+                              successText="Activated!"
+                              errorText="Failed"
                               className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-xs transition-colors"
                             >
                               Activate Shop
-                            </button>
+                            </ActionButton>
                           </div>
                         )}
                       </td>
@@ -550,13 +584,16 @@ export default function AdminShops() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={formLoading}
+                    state={addAction.state}
+                    loadingText="Adding Shop..."
+                    successText="Shop Added!"
+                    errorText="Failed"
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors cursor-pointer flex items-center gap-1.5"
                   >
-                    {formLoading ? 'Adding Shop...' : 'Create & Activate Shop'}
-                  </button>
+                    Create & Activate Shop
+                  </ActionButton>
                 </div>
 
               </form>

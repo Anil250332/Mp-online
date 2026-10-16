@@ -1,5 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import apiClient from '../../api/client';
+import { SkeletonStatCards, SkeletonTableRows } from '../../components/ui/Skeleton';
+import { getApiErrorMessage } from '../../store/apiError';
 import {
   Percent,
   Search,
@@ -9,131 +12,202 @@ import {
   Layers,
   ArrowUpRight,
   TrendingUp,
-  Download
+  Download,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
+
+// Backend /applications/verification-queue ka relevant shape
+interface QueueApplication {
+  id: string | number;
+  applicationNo: string;
+  serviceName?: string;
+  subServiceName?: string;
+  serviceCode?: string;
+  subServiceCode?: string;
+  shopName?: string;
+  agentName?: string;
+  agentMobile?: string;
+  operatorName?: string;
+  status?: string;
+  feeDeducted?: number | string;
+  operatorPayout?: number | string;
+  distributorPayout?: number | string;
+  createdAt?: string;
+  completedAt?: string;
+}
 
 interface CommissionRecord {
   id: string;
   txNo: string;
   shopName: string;
-  shopCode: string;
   ownerName: string;
+  operatorName: string;
   serviceName: string;
   serviceCode: string;
-  category: string;
   amount: number;
-  commissionRate: string;
-  commissionEarned: number;
+  operatorPayout: number;
+  distributorPayout: number;
   platformShare: number;
+  commissionRate: string;
   status: 'CREDITED' | 'PROCESSING';
   dateTime: string;
 }
 
+const toNum = (v: unknown) => {
+  const n = parseFloat(String(v ?? 0));
+  return isNaN(n) ? 0 : n;
+};
+
+const formatMoney = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// MySQL 'YYYY-MM-DD HH:MM:SS' Safari me Invalid Date deta hai — ' ' ko 'T' se replace
+const formatDateTime = (value?: string) => {
+  if (!value) return '-';
+  const d = new Date(String(value).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return String(value);
+  return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+};
+
+/**
+ * Application se commission row banana:
+ *  - Txn Amount = agent wallet se kata fee (feeDeducted)
+ *  - Operator Payout = verify hone par operator wallet me credit
+ *  - Platform Share = fee - operator payout - distributor payout (admin commission)
+ * Rejected application ka fee refund ho jata hai, isliye wo ledger me nahi aati.
+ */
+const toCommissionRecord = (a: QueueApplication): CommissionRecord => {
+  const amount = toNum(a.feeDeducted);
+  const operatorPayout = toNum(a.operatorPayout);
+  const distributorPayout = toNum(a.distributorPayout);
+  const platformShare = Math.max(0, amount - operatorPayout - distributorPayout);
+  const rate = amount > 0 ? (platformShare / amount) * 100 : 0;
+  return {
+    id: String(a.id),
+    txNo: a.applicationNo,
+    shopName: a.shopName || a.agentName || 'Agent Kiosk',
+    ownerName: a.agentName || '-',
+    operatorName: a.operatorName || 'Unassigned',
+    serviceName: a.subServiceName && a.subServiceName !== a.serviceName
+      ? `${a.serviceName || 'Service'} - ${a.subServiceName}`
+      : a.serviceName || a.subServiceName || 'Service Application',
+    serviceCode: a.subServiceCode || a.serviceCode || '-',
+    amount,
+    operatorPayout,
+    distributorPayout,
+    platformShare,
+    commissionRate: `${Number(rate.toFixed(2))}%`,
+    status: String(a.status || '').toLowerCase() === 'verified' ? 'CREDITED' : 'PROCESSING',
+    dateTime: formatDateTime(a.completedAt || a.createdAt)
+  };
+};
+
+// CSV cell escape (comma / quote / newline)
+const csvCell = (v: string | number) => {
+  const s = String(v ?? '');
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
 export default function AdminCommissions() {
-  const [records] = useState<CommissionRecord[]>([
-    {
-      id: '1',
-      txNo: 'TXN-2026-9001',
-      shopName: 'Sharma MP Online & CSC Center',
-      shopCode: 'SHOP-2026-1003',
-      ownerName: 'Rajesh Sharma',
-      serviceName: 'Ayushman Card PVC Print',
-      serviceCode: 'SRV-001',
-      category: 'Health Services',
-      amount: 150,
-      commissionRate: '10%',
-      commissionEarned: 15,
-      platformShare: 135,
-      status: 'CREDITED',
-      dateTime: '18 Sept 2026, 11:45 am'
-    },
-    {
-      id: '2',
-      txNo: 'TXN-2026-9002',
-      shopName: 'Digital Seva Kendra',
-      shopCode: 'SHOP-2026-1004',
-      ownerName: 'Aman Gupta',
-      serviceName: 'MP E-District Revenue Certificate',
-      serviceCode: 'SRV-002',
-      category: 'Citizen Services',
-      amount: 300,
-      commissionRate: '15%',
-      commissionEarned: 45,
-      platformShare: 255,
-      status: 'CREDITED',
-      dateTime: '18 Sept 2026, 10:20 am'
-    },
-    {
-      id: '3',
-      txNo: 'TXN-2026-9003',
-      shopName: 'Shri Ram Online Services',
-      shopCode: 'SHOP-2026-1005',
-      ownerName: 'Sunil Verma',
-      serviceName: 'Khasra Khatoni B1 Copy',
-      serviceCode: 'SRV-003',
-      category: 'Revenue & Land',
-      amount: 200,
-      commissionRate: '12%',
-      commissionEarned: 24,
-      platformShare: 176,
-      status: 'CREDITED',
-      dateTime: '17 Sept 2026, 04:15 pm'
-    },
-    {
-      id: '4',
-      txNo: 'TXN-2026-9004',
-      shopName: 'sdsdf Kiosk',
-      shopCode: 'SHOP-2026-1012',
-      ownerName: 'Anilk sahu',
-      serviceName: 'Samagra Portal KYC & Update',
-      serviceCode: 'SRV-004',
-      category: 'Social Welfare',
-      amount: 250,
-      commissionRate: '8%',
-      commissionEarned: 20,
-      platformShare: 230,
-      status: 'CREDITED',
-      dateTime: '17 Sept 2026, 02:10 pm'
-    },
-    {
-      id: '5',
-      txNo: 'TXN-2026-9005',
-      shopName: 'ma kali Services',
-      shopCode: 'SHOP-2026-1008',
-      ownerName: 'test owner',
-      serviceName: 'Income & Domicile Certificate',
-      serviceCode: 'SRV-005',
-      category: 'Citizen Services',
-      amount: 400,
-      commissionRate: '14%',
-      commissionEarned: 56,
-      platformShare: 344,
-      status: 'PROCESSING',
-      dateTime: '18 Sept 2026, 12:05 am'
-    }
-  ]);
-
+  const [records, setRecords] = useState<CommissionRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeCategory] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'CREDITED' | 'PROCESSING'>('ALL');
 
+  const fetchRecords = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await apiClient.get('/applications/verification-queue', { params: { limit: 1000 } });
+      if (res.data.status === 'success' && Array.isArray(res.data.data)) {
+        const list = (res.data.data as QueueApplication[])
+          .filter(a => String(a.status || '').toLowerCase() !== 'rejected' && toNum(a.feeDeducted) > 0)
+          .map(toCommissionRecord);
+        setRecords(list);
+      } else {
+        setErrorMsg(res.data.message || 'Commission data load nahi ho paya.');
+      }
+    } catch (e) {
+      setErrorMsg(getApiErrorMessage(e, 'Commission data load nahi ho paya.'));
+    } finally {
+      setIsLoading(false);
+      setHasLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRecords();
+  }, [fetchRecords]);
+
+  const term = searchTerm.toLowerCase();
   const filteredRecords = records.filter(r => {
-    const matchesCategory = activeCategory === 'ALL' || r.category === activeCategory;
+    const matchesStatus = statusFilter === 'ALL' || r.status === statusFilter;
     const matchesSearch =
-      r.txNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.shopName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.shopCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.serviceName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.ownerName.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCategory && matchesSearch;
+      r.txNo.toLowerCase().includes(term) ||
+      r.shopName.toLowerCase().includes(term) ||
+      r.serviceName.toLowerCase().includes(term) ||
+      r.serviceCode.toLowerCase().includes(term) ||
+      r.operatorName.toLowerCase().includes(term) ||
+      r.ownerName.toLowerCase().includes(term);
+    return matchesStatus && matchesSearch;
   });
 
-  const totalCommissionDistributed = records.reduce((acc, r) => acc + r.commissionEarned, 0);
-  const totalVolumeProcessed = records.reduce((acc, r) => acc + r.amount, 0);
+  // Stats sirf CREDITED (verified) records se — processing wale abhi settle nahi hue
+  const credited = useMemo(() => records.filter(r => r.status === 'CREDITED'), [records]);
+  const totalPlatformCommission = credited.reduce((acc, r) => acc + r.platformShare, 0);
+  const totalOperatorPayout = credited.reduce((acc, r) => acc + r.operatorPayout, 0);
+  const totalVolumeProcessed = credited.reduce((acc, r) => acc + r.amount, 0);
+  const processingCount = records.length - credited.length;
+
+  // Sabse zyada platform commission dene wala outlet (real data se)
+  const topOutlet = useMemo(() => {
+    const map = new Map<string, { name: string; owner: string; total: number; count: number }>();
+    credited.forEach(r => {
+      const key = `${r.shopName}|${r.ownerName}`;
+      const cur = map.get(key) || { name: r.shopName, owner: r.ownerName, total: 0, count: 0 };
+      cur.total += r.platformShare;
+      cur.count += 1;
+      map.set(key, cur);
+    });
+    let best: { name: string; owner: string; total: number; count: number } | null = null;
+    map.forEach(v => {
+      if (!best || v.total > best.total) best = v;
+    });
+    return best as { name: string; owner: string; total: number; count: number } | null;
+  }, [credited]);
+
+  // Table me dikh rahe rows ka real CSV download
+  const handleExport = () => {
+    const header = [
+      'Application No', 'Date', 'Shop', 'Owner', 'Operator', 'Service', 'Service Code',
+      'Txn Amount', 'Operator Payout', 'Distributor Payout', 'Platform Commission', 'Commission Rate', 'Status'
+    ];
+    const rows = filteredRecords.map(r => [
+      r.txNo, r.dateTime, r.shopName, r.ownerName, r.operatorName, r.serviceName, r.serviceCode,
+      r.amount.toFixed(2), r.operatorPayout.toFixed(2), r.distributorPayout.toFixed(2), r.platformShare.toFixed(2),
+      r.commissionRate, r.status
+    ]);
+    const csv = [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+    // BOM taaki Excel me ₹ / Hindi text sahi dikhe
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `commission-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const showSkeleton = !hasLoaded && records.length === 0;
 
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6">
-        
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
@@ -142,34 +216,55 @@ export default function AdminCommissions() {
               <span>Service Commission Ledger (Admin & Manager)</span>
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 mt-1">
-              Track real-time commission earnings per shop for every executed service transaction.
+              Har service application ka fee split — operator payout aur platform commission (live database se).
             </p>
           </div>
 
-          <button
-            onClick={() => alert('Exporting Commission Report CSV...')}
-            className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
-          >
-            <Download className="h-4 w-4" />
-            <span>Export Report</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchRecords}
+              disabled={isLoading}
+              className="px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 text-emerald-600 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={filteredRecords.length === 0}
+              className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download className="h-4 w-4" />
+              <span>Export Report</span>
+            </button>
+          </div>
         </div>
 
+        {errorMsg && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2">
+            <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* Stats Summary Widgets */}
+        {showSkeleton ? (
+          <SkeletonStatCards count={4} />
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-2">
             <div className="flex items-center justify-between text-slate-500 text-xs font-bold uppercase tracking-wider">
-              <span>Total Shop Commission</span>
+              <span>Platform Commission</span>
               <div className="h-8 w-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
                 <Percent className="h-4 w-4" />
               </div>
             </div>
             <div className="text-2xl font-black text-slate-900">
-              ₹ {totalCommissionDistributed.toLocaleString()}
+              ₹ {formatMoney(totalPlatformCommission)}
             </div>
             <p className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1">
               <TrendingUp className="h-3 w-3" />
-              <span>Credited to Shop Wallets</span>
+              <span>Verified applications se earned</span>
             </p>
           </div>
 
@@ -181,10 +276,10 @@ export default function AdminCommissions() {
               </div>
             </div>
             <div className="text-2xl font-black text-slate-900">
-              ₹ {totalVolumeProcessed.toLocaleString()}
+              ₹ {formatMoney(totalVolumeProcessed)}
             </div>
             <p className="text-[11px] text-slate-500 font-medium">
-              Gross Value Executed
+              Operator Payout: ₹ {formatMoney(totalOperatorPayout)}
             </p>
           </div>
 
@@ -196,10 +291,10 @@ export default function AdminCommissions() {
               </div>
             </div>
             <div className="text-2xl font-black text-slate-900">
-              {records.length}
+              {credited.length}
             </div>
             <p className="text-[11px] text-violet-600 font-semibold">
-              Successful Executions
+              Verified • {processingCount} in processing
             </p>
           </div>
 
@@ -210,24 +305,40 @@ export default function AdminCommissions() {
                 <Store className="h-4 w-4" />
               </div>
             </div>
-            <div className="text-sm font-bold text-slate-900 truncate">
-              Digital Seva Kendra
-            </div>
-            <p className="text-[11px] text-amber-600 font-mono font-bold">
-              SHOP-2026-1004
-            </p>
+            {topOutlet ? (
+              <>
+                <div className="text-sm font-bold text-slate-900 truncate">{topOutlet.name}</div>
+                <p className="text-[11px] text-amber-600 font-mono font-bold">
+                  ₹ {formatMoney(topOutlet.total)} • {topOutlet.count} txn
+                </p>
+              </>
+            ) : (
+              <div className="text-sm font-semibold text-slate-400">No verified data yet</div>
+            )}
           </div>
         </div>
+        )}
 
-
-
-        {/* Search */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+        {/* Search & Status Filter */}
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {(['ALL', 'CREDITED', 'PROCESSING'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setStatusFilter(tab)}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  statusFilter === tab ? 'bg-slate-900 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {tab === 'ALL' ? 'All' : tab === 'CREDITED' ? 'Credited (Verified)' : 'Processing'}
+              </button>
+            ))}
+          </div>
           <div className="relative w-full">
             <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by Txn ID, Shop Name, Owner, or Service Name..."
+              placeholder="Search by Application No, Shop Name, Owner, Operator, or Service Name..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
@@ -247,17 +358,19 @@ export default function AdminCommissions() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[11px] font-semibold border-b border-slate-200">
-                  <th className="py-3.5 px-4">Txn ID & Date</th>
+                  <th className="py-3.5 px-4">App No & Date</th>
                   <th className="py-3.5 px-4">Shop Details</th>
                   <th className="py-3.5 px-4">Service Used</th>
                   <th className="py-3.5 px-4">Txn Amount</th>
-                  <th className="py-3.5 px-4">Shop Commission Earned</th>
-                  <th className="py-3.5 px-4">Platform Share</th>
+                  <th className="py-3.5 px-4">Operator Payout</th>
+                  <th className="py-3.5 px-4">Platform Commission</th>
                   <th className="py-3.5 px-4 text-center">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredRecords.length === 0 ? (
+                {showSkeleton ? (
+                  <SkeletonTableRows rows={5} cols={7} />
+                ) : filteredRecords.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-12 text-center text-slate-400 text-xs">
                       No commission records found matching your filter.
@@ -276,7 +389,7 @@ export default function AdminCommissions() {
                         <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
                           <span>{r.ownerName}</span>
                           <span className="text-slate-300">•</span>
-                          <span className="font-mono text-blue-700">{r.shopCode}</span>
+                          <span className="text-slate-600">Op: {r.operatorName}</span>
                         </div>
                       </td>
 
@@ -288,20 +401,20 @@ export default function AdminCommissions() {
                       </td>
 
                       <td className="py-3.5 px-4 font-bold text-slate-900">
-                        ₹ {r.amount}
+                        ₹ {formatMoney(r.amount)}
+                      </td>
+
+                      <td className="py-3.5 px-4 font-mono font-bold text-slate-600">
+                        ₹ {formatMoney(r.operatorPayout)}
                       </td>
 
                       <td className="py-3.5 px-4">
                         <div className="font-mono font-black text-emerald-700 text-sm">
-                          + ₹ {r.commissionEarned}
+                          + ₹ {formatMoney(r.platformShare)}
                         </div>
                         <div className="text-[10px] text-emerald-600 font-bold">
                           ({r.commissionRate} rate)
                         </div>
-                      </td>
-
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-600">
-                        ₹ {r.platformShare}
                       </td>
 
                       <td className="py-3.5 px-4 text-center">

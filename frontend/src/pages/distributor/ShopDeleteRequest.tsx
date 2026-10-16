@@ -1,7 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { shopStore } from '../../services/shopStore';
-import type { Shop } from '../../services/shopStore';
+import { useAppDispatch, useAppSelector, selectShops, selectShopsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchShops } from '../../store/slices/shopsSlice';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonTableRows } from '../../components/ui/Skeleton';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import {
   UserX,
   Trash2,
@@ -16,7 +20,13 @@ import {
 } from 'lucide-react';
 
 export default function ShopDeleteRequest() {
-  const [activeShops, setActiveShops] = useState<Shop[]>([]);
+  const dispatch = useAppDispatch();
+  const allShops = useAppSelector(selectShops);
+  const shopsStatus = useAppSelector(selectShopsStatus);
+  // Redux state frozen hai — sirf filter karke read
+  const activeShops = useMemo(() => allShops.filter(s => s.status === 'ACTIVE'), [allShops]);
+  const isShopsLoading = isInitialLoading(shopsStatus, allShops.length);
+  const submitAction = useAsyncAction();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedShopId, setSelectedShopId] = useState('');
   const [reason, setReason] = useState('');
@@ -28,15 +38,8 @@ export default function ShopDeleteRequest() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const updateShops = () => {
-      const all = shopStore.getShops();
-      setActiveShops(all.filter(s => s.status === 'ACTIVE'));
-    };
-
-    updateShops();
-    const unsubscribe = shopStore.subscribe(updateShops);
-    return unsubscribe;
-  }, []);
+    dispatch(fetchShops());
+  }, [dispatch]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -71,20 +74,28 @@ export default function ShopDeleteRequest() {
       return;
     }
 
-    const shop = activeShops.find(s => s.id === selectedShopId);
-    shopStore.requestDeletion(selectedShopId, reason);
+    const shopId = selectedShopId;
+    const shop = activeShops.find(s => s.id === shopId);
+    submitAction.run(async () => {
+      try {
+        await shopStore.requestDeletion(shopId, reason);
+      } catch (err: any) {
+        setErrorMsg(err.message || 'Failed to submit deletion request.');
+        throw err;
+      }
 
-    setSuccessMsg(`Deletion request for "${shop?.shopName || 'Shop'}" submitted successfully to Admin!`);
-    setIsDialogOpen(false);
-    setReason('');
-    setTimeout(() => setSuccessMsg(''), 4000);
+      setSuccessMsg(`Deletion request for "${shop?.shopName || 'Shop'}" submitted successfully to Admin!`);
+      setIsDialogOpen(false);
+      setReason('');
+      setTimeout(() => setSuccessMsg(''), 4000);
+    });
   };
 
   const selectedShop = activeShops.find(s => s.id === selectedShopId);
-  const filteredShops = activeShops.filter(shop => 
-    shop.shopName.toLowerCase().includes(shopSearch.toLowerCase()) ||
-    shop.ownerName.toLowerCase().includes(shopSearch.toLowerCase()) ||
-    shop.mobile.includes(shopSearch) ||
+  const filteredShops = activeShops.filter(shop =>
+    (shop.shopName || '').toLowerCase().includes(shopSearch.toLowerCase()) ||
+    (shop.ownerName || '').toLowerCase().includes(shopSearch.toLowerCase()) ||
+    (shop.mobile || '').includes(shopSearch) ||
     (shop.shopCode && shop.shopCode.toLowerCase().includes(shopSearch.toLowerCase()))
   );
 
@@ -140,7 +151,9 @@ export default function ShopDeleteRequest() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {activeShops.length === 0 ? (
+                {isShopsLoading ? (
+                  <SkeletonTableRows rows={4} cols={5} />
+                ) : activeShops.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
                       No active shops available for deletion request.
@@ -336,12 +349,16 @@ export default function ShopDeleteRequest() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors"
+                    state={submitAction.state}
+                    loadingText="Submitting..."
+                    successText="Request Sent!"
+                    errorText="Failed"
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     Submit Request to Admin
-                  </button>
+                  </ActionButton>
                 </div>
 
               </form>

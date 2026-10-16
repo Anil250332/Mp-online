@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
-import { walletStore, type WalletTransaction } from '../../services/walletStore';
 import apiClient from '../../api/client';
+import { useAppDispatch, useAppSelector, selectWalletBalance, selectWalletTransactions, selectWalletStatus, isInitialLoading } from '../../store/hooks';
+import { fetchWallet } from '../../store/slices/walletSlice';
+import { getApiErrorMessage } from '../../store/apiError';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton, SkeletonTableRows } from '../../components/ui/Skeleton';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import {
   Wallet,
   ArrowUpRight,
@@ -16,20 +21,50 @@ import {
   Hash,
   User,
   RefreshCw,
-  Loader2
+  Clock,
+  ShieldCheck,
+  XCircle
 } from 'lucide-react';
+
+interface MyWithdrawal {
+  id: string;
+  reqNo: string;
+  amount: number;
+  paymentMode: string;
+  status: string;
+  utrNo?: string | null;
+  rejectionReason?: string | null;
+  createdAt: string;
+}
+
+// 2-tier payout status ka operator-friendly label
+const withdrawalBadge = (status: string) => {
+  const s = (status || '').toUpperCase();
+  if (s === 'PROCESSED' || s === 'APPROVED') return { label: 'PAID', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: <CheckCircle2 className="h-3 w-3" /> };
+  if (s === 'MANAGER_VERIFIED') return { label: 'VERIFIED - AWAITING PAYOUT', cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: <ShieldCheck className="h-3 w-3" /> };
+  if (s === 'PENDING') return { label: 'PENDING VERIFICATION', cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: <Clock className="h-3 w-3" /> };
+  return { label: 'REJECTED (REFUNDED)', cls: 'bg-red-50 text-red-700 border-red-200', icon: <XCircle className="h-3 w-3" /> };
+};
 
 export default function OperatorWallet() {
   const { user } = useAuth();
-  const [balance, setBalance] = useState<number>(0);
-  const [txns, setTxns] = useState<WalletTransaction[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const dispatch = useAppDispatch();
+  // Wallet balance & ledger Redux se (header balance bhi same source)
+  const balance = useAppSelector(selectWalletBalance);
+  const txns = useAppSelector(selectWalletTransactions);
+  const walletStatus = useAppSelector(selectWalletStatus);
+  const isWalletLoading = isInitialLoading(walletStatus, txns.length);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitAction = useAsyncAction();
+
+  // Meri withdrawal requests (2-tier status tracking)
+  const [myRequests, setMyRequests] = useState<MyWithdrawal[]>([]);
+  const [isRequestsLoading, setIsRequestsLoading] = useState(true);
 
   // Withdrawal Form State
+  const [paymentMode, setPaymentMode] = useState<'bank_transfer' | 'upi'>('bank_transfer');
   const [amount, setAmount] = useState('');
   const [accountHolderName, setAccountHolderName] = useState('');
   const [bankName, setBankName] = useState('State Bank of India');
@@ -50,28 +85,31 @@ export default function OperatorWallet() {
 
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
-  const syncWallet = useCallback(async () => {
-    setIsLoading(true);
-    await walletStore.syncBackend();
-    setBalance(walletStore.getBalance());
-    setTxns(walletStore.getTransactions());
-    setIsLoading(false);
+  const fetchMyRequests = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/wallet/withdrawals');
+      if (res.data.status === 'success' && Array.isArray(res.data.data)) setMyRequests(res.data.data);
+    } catch (e) {
+      console.error('Failed to fetch withdrawal requests:', e);
+    } finally {
+      setIsRequestsLoading(false);
+    }
   }, []);
+
+  const syncWallet = useCallback(async () => {
+    await Promise.all([dispatch(fetchWallet()), fetchMyRequests()]);
+  }, [dispatch, fetchMyRequests]);
 
   useEffect(() => {
     syncWallet();
-    const unsubscribe = walletStore.subscribe(() => {
-      setBalance(walletStore.getBalance());
-      setTxns(walletStore.getTransactions());
-    });
-    return unsubscribe;
   }, [syncWallet]);
 
   const handleOpenWithdrawalModal = () => {
     setErrorMsg('');
     setFieldErrors({});
     setAmount('');
-    setAccountHolderName(user?.full_name || 'Operator');
+    setAccountHolderName(user?.full_name || '');
+    setPaymentMode('bank_transfer');
     setAccountNo('');
     setConfirmAccountNo('');
     setIfsc('');
@@ -95,8 +133,19 @@ export default function OperatorWallet() {
       errors.accountHolderName = 'Account holder name required hai.';
     } else if (accountHolderName.trim().length < 3) {
       errors.accountHolderName = 'Account holder name kam se kam 3 letters ka hona chahiye.';
-    } else if (!/^[a-zA-Z\s.]+$/.test(accountHolderName.trim())) {
+    } else if (!/^[\p{L}\p{M}\s.]+$/u.test(accountHolderName.trim())) {
       errors.accountHolderName = 'Name me sirf alphabets aur spaces allowed hain.';
+    }
+
+    const cleanUpi = upiId.trim();
+    const upiValid = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(cleanUpi);
+
+    // UPI mode me bank details zaroori nahi
+    if (paymentMode === 'upi') {
+      if (!cleanUpi) errors.upiId = 'UPI ID required hai.';
+      else if (!upiValid) errors.upiId = 'Invalid UPI ID format! Example: 9876543210@paytm';
+      setFieldErrors(errors);
+      return Object.keys(errors).length === 0;
     }
 
     if (!bankName.trim()) {
@@ -124,8 +173,7 @@ export default function OperatorWallet() {
       errors.ifsc = 'Invalid IFSC code! Example: SBIN0001234 (11 chars, 5th char 0).';
     }
 
-    const cleanUpi = upiId.trim();
-    if (cleanUpi && !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(cleanUpi)) {
+    if (cleanUpi && !upiValid) {
       errors.upiId = 'Invalid UPI ID format! Example: 9876543210@paytm';
     }
 
@@ -143,32 +191,33 @@ export default function OperatorWallet() {
     }
 
     const val = parseFloat(amount);
-    setIsSubmitting(true);
-    try {
-      const res = await apiClient.post('/wallet/withdraw', {
-        amount: val,
-        accountHolderName: accountHolderName.trim(),
-        bankName: bankName.trim(),
-        accountNo: accountNo.trim(),
-        ifscCode: ifsc.trim().toUpperCase(),
-        upiId: upiId.trim() || undefined,
-        paymentMode: upiId.trim() ? 'upi' : 'bank_transfer'
-      });
+    const isUpi = paymentMode === 'upi';
+    submitAction.run(async () => {
+      try {
+        const res = await apiClient.post('/wallet/withdraw', {
+          amount: val,
+          accountHolderName: accountHolderName.trim(),
+          bankName: isUpi ? undefined : bankName.trim(),
+          accountNo: isUpi ? undefined : accountNo.trim(),
+          ifscCode: isUpi ? undefined : ifsc.trim().toUpperCase(),
+          upiId: upiId.trim() || undefined,
+          paymentMode
+        });
 
-      if (res.data.status === 'success') {
+        if (res.data.status !== 'success') {
+          setErrorMsg(res.data.message || 'Failed to submit withdrawal request.');
+          return false;
+        }
         const reqNo = res.data.data?.reqNo || 'WDR-REQ';
-        setSuccessMsg(`Withdrawal Request "${reqNo}" for ₹ ${val.toLocaleString('en-IN', { minimumFractionDigits: 2 })} submitted successfully!`);
+        setSuccessMsg(`Withdrawal Request "${reqNo}" for ₹ ${val.toLocaleString('en-IN', { minimumFractionDigits: 2 })} submitted! Manager verification ke baad Admin payout release karega.`);
         setIsModalOpen(false);
         await syncWallet();
-        setTimeout(() => setSuccessMsg(''), 5000);
-      } else {
-        setErrorMsg(res.data.message || 'Failed to submit withdrawal request.');
+        setTimeout(() => setSuccessMsg(''), 6000);
+      } catch (err) {
+        setErrorMsg(getApiErrorMessage(err, 'Server error while submitting withdrawal.'));
+        throw err;
       }
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Server error while submitting withdrawal.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
   return (
@@ -190,10 +239,10 @@ export default function OperatorWallet() {
           <div className="flex items-center gap-3">
             <button
               onClick={syncWallet}
-              disabled={isLoading}
-              className="px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer shadow-xs"
+              disabled={walletStatus === 'loading'}
+              className="px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
             >
-              <RefreshCw className={`h-4 w-4 text-emerald-600 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-4 w-4 text-emerald-600 ${walletStatus === 'loading' ? 'animate-spin' : ''}`} />
               <span>Refresh</span>
             </button>
 
@@ -221,9 +270,13 @@ export default function OperatorWallet() {
             <span className="text-xs text-emerald-200 uppercase font-bold tracking-widest block">
               Available Operator Wallet Balance
             </span>
-            <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight">
-              ₹ {balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
+            {isWalletLoading ? (
+              <Skeleton className="h-10 w-48 bg-white/20!" />
+            ) : (
+              <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight">
+                ₹ {balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            )}
             <p className="text-xs text-emerald-300">
               Earnings credited instantly upon task verification by Admin/Manager.
             </p>
@@ -239,11 +292,67 @@ export default function OperatorWallet() {
           <div className="absolute -right-8 -bottom-8 h-40 w-40 rounded-full bg-white/10 blur-xl pointer-events-none" />
         </div>
 
+        {/* My Withdrawal Requests (2-tier status) */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-4 border-b border-slate-200">
+            <h2 className="text-sm font-bold text-slate-800">
+              My Withdrawal Requests ({isRequestsLoading ? '…' : myRequests.length})
+            </h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">Pending → Manager Verified → Paid (UTR ke saath)</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[11px] font-semibold border-b border-slate-200">
+                  <th className="py-3 px-4">Request No</th>
+                  <th className="py-3 px-4">Mode</th>
+                  <th className="py-3 px-4">Date</th>
+                  <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-4 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
+                {isRequestsLoading ? (
+                  <SkeletonTableRows rows={3} cols={5} />
+                ) : myRequests.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">Abhi tak koi withdrawal request nahi.</td>
+                  </tr>
+                ) : (
+                  myRequests.map(r => {
+                    const badge = withdrawalBadge(r.status);
+                    return (
+                      <tr key={r.id} className="hover:bg-slate-50/80">
+                        <td className="py-3 px-4 font-mono text-xs font-bold text-emerald-700">
+                          {r.reqNo}
+                          {r.utrNo && <span className="block text-[10px] text-slate-500 font-medium">UTR: {r.utrNo}</span>}
+                          {r.rejectionReason && <span className="block text-[10px] text-red-600 font-medium font-sans">Reason: {r.rejectionReason}</span>}
+                        </td>
+                        <td className="py-3 px-4 text-xs uppercase text-slate-600">{r.paymentMode === 'upi' ? 'UPI' : 'Bank'}</td>
+                        <td className="py-3 px-4 text-xs text-slate-500">{r.createdAt}</td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${badge.cls}`}>
+                            {badge.icon}
+                            {badge.label}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                          ₹ {Number(r.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         {/* Transaction History Table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-4 border-b border-slate-200 flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-800">
-              Wallet Transaction History ({txns.length})
+              Wallet Transaction History ({isWalletLoading ? '…' : txns.length})
             </h2>
           </div>
 
@@ -258,7 +367,9 @@ export default function OperatorWallet() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {txns.length === 0 ? (
+                {isWalletLoading ? (
+                  <SkeletonTableRows rows={5} cols={4} />
+                ) : txns.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="py-12 text-center text-slate-400 text-xs">
                       No wallet transactions recorded yet.
@@ -351,6 +462,30 @@ export default function OperatorWallet() {
                   )}
                 </div>
 
+                {/* Payment Mode: Bank Transfer ya UPI (UPI me bank details zaroori nahi) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Payout Mode *
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['bank_transfer', 'upi'] as const).map(m => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          setPaymentMode(m);
+                          setFieldErrors({});
+                        }}
+                        className={`py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                          paymentMode === m ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        {m === 'upi' ? 'UPI Transfer' : 'Bank Transfer'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Account Holder Name (As per Bank) *
@@ -378,6 +513,8 @@ export default function OperatorWallet() {
                   )}
                 </div>
 
+                {paymentMode === 'bank_transfer' && (
+                <>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Bank Name *
@@ -461,7 +598,11 @@ export default function OperatorWallet() {
                   </div>
                 </div>
 
+                </>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {paymentMode === 'bank_transfer' && (
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                       IFSC Code *
@@ -488,10 +629,11 @@ export default function OperatorWallet() {
                       </p>
                     )}
                   </div>
+                  )}
 
-                  <div>
+                  <div className={paymentMode === 'upi' ? 'sm:col-span-2' : ''}>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      UPI ID (Optional)
+                      {paymentMode === 'upi' ? 'UPI ID *' : 'UPI ID (Optional)'}
                     </label>
                     <input
                       type="text"
@@ -522,20 +664,15 @@ export default function OperatorWallet() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={isSubmitting}
-                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[140px]"
+                    state={submitAction.state}
+                    loadingText="Submitting..."
+                    successText="Submitted!"
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md min-w-35"
                   >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin text-white" />
-                        <span>Submitting...</span>
-                      </>
-                    ) : (
-                      <span>Submit Withdrawal Request</span>
-                    )}
-                  </button>
+                    <span>Submit Withdrawal Request</span>
+                  </ActionButton>
                 </div>
 
               </form>

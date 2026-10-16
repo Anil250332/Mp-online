@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import apiClient from '../../api/client';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton } from '../../components/ui/Skeleton';
 import {
   User,
   Phone,
@@ -16,13 +19,14 @@ import {
 } from 'lucide-react';
 
 export default function AgentProfile() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
+  const profileLoading = authLoading || !user;
 
   // Password Form State
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [passLoading, setPassLoading] = useState(false);
+  const passAction = useAsyncAction();
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -31,6 +35,8 @@ export default function AgentProfile() {
     helplineNumber: '+91 0755 2700800',
     supportEmail: 'distributor-help@mponline.gov.in'
   });
+
+  const [supportLoading, setSupportLoading] = useState(true);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -44,12 +50,14 @@ export default function AgentProfile() {
         }
       } catch (e) {
         console.error('Failed to fetch support settings:', e);
+      } finally {
+        setSupportLoading(false);
       }
     };
     fetchSettings();
   }, []);
 
-  const handlePasswordUpdate = async (e: React.FormEvent) => {
+  const handlePasswordUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -69,25 +77,28 @@ export default function AgentProfile() {
       return;
     }
 
-    setPassLoading(true);
-    try {
-      const response = await apiClient.post('/auth/change-password', {
-        currentPassword,
-        newPassword
-      });
+    passAction.run(async () => {
+      try {
+        const response = await apiClient.post('/auth/change-password', {
+          currentPassword,
+          newPassword
+        });
 
-      if (response.data.status === 'success') {
-        setSuccessMsg('Security password updated successfully!');
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setTimeout(() => setSuccessMsg(''), 4000);
+        if (response.data.status === 'success') {
+          setSuccessMsg('Security password updated successfully!');
+          setCurrentPassword('');
+          setNewPassword('');
+          setConfirmPassword('');
+          setTimeout(() => setSuccessMsg(''), 4000);
+          return true;
+        }
+        setErrorMsg(response.data.message || 'Password update failed.');
+        return false;
+      } catch (err: any) {
+        setErrorMsg(err.response?.data?.message || err.message || 'Password update failed. Kripya Current Password check karein.');
+        return false;
       }
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Password update failed. Kripya Current Password check karein.');
-    } finally {
-      setPassLoading(false);
-    }
+    });
   };
 
   return (
@@ -117,6 +128,17 @@ export default function AgentProfile() {
 
           {/* Left Box: Profile Info */}
           <div className="space-y-6">
+            {profileLoading ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4" aria-busy="true">
+                <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                  <Skeleton className="h-12 w-12 rounded-full" />
+                  <Skeleton className="h-4 w-40" />
+                </div>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 w-full rounded-xl" />
+                ))}
+              </div>
+            ) : (
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
               <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
                 <div className="h-12 w-12 rounded-full bg-blue-100 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-lg">
@@ -133,7 +155,7 @@ export default function AgentProfile() {
                   <Store className="h-4 w-4 text-blue-600 shrink-0" />
                   <div>
                     <div className="text-[10px] text-slate-400 font-semibold uppercase">Shop / Kiosk Name</div>
-                    <div className="font-bold text-slate-800">{user?.shop_name || 'Sharma MP Online & CSC Center'}</div>
+                    <div className="font-bold text-slate-800">{user?.shop_name || '—'}</div>
                   </div>
                 </div>
 
@@ -141,7 +163,7 @@ export default function AgentProfile() {
                   <Phone className="h-4 w-4 text-blue-600 shrink-0" />
                   <div>
                     <div className="text-[10px] text-slate-400 font-semibold uppercase">Mobile Number</div>
-                    <div className="font-bold text-slate-800">{user?.mobile || '9876543210'}</div>
+                    <div className="font-bold text-slate-800">{user?.mobile || '—'}</div>
                   </div>
                 </div>
 
@@ -149,7 +171,7 @@ export default function AgentProfile() {
                   <Mail className="h-4 w-4 text-blue-600 shrink-0" />
                   <div>
                     <div className="text-[10px] text-slate-400 font-semibold uppercase">Email Address</div>
-                    <div className="font-bold text-slate-800">{user?.email || 'retailer@mponline.in'}</div>
+                    <div className="font-bold text-slate-800">{user?.email || '—'}</div>
                   </div>
                 </div>
 
@@ -157,11 +179,12 @@ export default function AgentProfile() {
                   <MapPin className="h-4 w-4 text-blue-600 shrink-0" />
                   <div>
                     <div className="text-[10px] text-slate-400 font-semibold uppercase">District / Location</div>
-                    <div className="font-bold text-slate-800">{user?.district || 'Bhopal'}, MP</div>
+                    <div className="font-bold text-slate-800">{user?.district ? `${user.district}, MP` : '—'}</div>
                   </div>
                 </div>
               </div>
             </div>
+            )}
 
             {/* Dynamic Support Box */}
             <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-sm space-y-3">
@@ -173,8 +196,17 @@ export default function AgentProfile() {
                 Facing technical issues or need help with kiosk verification? Contact your assigned District Manager.
               </p>
               <div className="pt-2 border-t border-slate-800 text-xs space-y-1.5 text-slate-300">
-                <p>📞 Helpline: <span className="text-emerald-400 font-bold">{supportInfo.helplineNumber}</span></p>
-                <p>✉️ Support Email: <span className="text-blue-300 font-bold">{supportInfo.supportEmail}</span></p>
+                {supportLoading ? (
+                  <>
+                    <Skeleton className="h-3 w-48 bg-white/15!" />
+                    <Skeleton className="h-3 w-56 bg-white/15!" />
+                  </>
+                ) : (
+                  <>
+                    <p>📞 Helpline: <span className="text-emerald-400 font-bold">{supportInfo.helplineNumber}</span></p>
+                    <p>✉️ Support Email: <span className="text-blue-300 font-bold">{supportInfo.supportEmail}</span></p>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -237,20 +269,17 @@ export default function AgentProfile() {
               </div>
 
               <div className="pt-2">
-                <button
+                <ActionButton
                   type="submit"
-                  disabled={passLoading}
+                  state={passAction.state}
+                  loadingText="Updating..."
+                  successText="Password Updated!"
+                  errorText="Update Failed"
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  {passLoading ? (
-                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                  ) : (
-                    <>
-                      <Key className="h-4 w-4" />
-                      <span>Update Password</span>
-                    </>
-                  )}
-                </button>
+                  <Key className="h-4 w-4" />
+                  <span>Update Password</span>
+                </ActionButton>
               </div>
             </form>
           </div>

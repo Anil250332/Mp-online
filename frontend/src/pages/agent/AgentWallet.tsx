@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { walletStore, type WalletTransaction } from '../../services/walletStore';
+import { useAppDispatch, useAppSelector, selectWalletBalance, selectWalletTransactions, selectWalletStatus, isInitialLoading } from '../../store/hooks';
+import { fetchWallet, rechargeWallet } from '../../store/slices/walletSlice';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton, SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   Wallet,
   PlusCircle,
@@ -11,13 +15,17 @@ import {
   AlertCircle,
   X,
   CreditCard,
-  QrCode,
-  Loader2
+  QrCode
 } from 'lucide-react';
 
 export default function AgentWallet() {
-  const [balance, setBalance] = useState<number>(500.00);
-  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  // Redux se real balance / transactions (koi fake ₹500 default nahi)
+  const dispatch = useAppDispatch();
+  const balance = useAppSelector(selectWalletBalance);
+  const transactions = useAppSelector(selectWalletTransactions);
+  const walletStatus = useAppSelector(selectWalletStatus);
+  const isLoading = isInitialLoading(walletStatus, transactions.length);
+  const recharge = useAsyncAction();
   const [activeTab, setActiveTab] = useState<'ALL' | 'CREDIT' | 'DEBIT'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -29,21 +37,11 @@ export default function AgentWallet() {
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
-    const updateState = () => {
-      setBalance(walletStore.getBalance());
-      setTransactions(walletStore.getTransactions());
-    };
-    updateState();
-    const unsubscribe = walletStore.subscribe(updateState);
-    return unsubscribe;
-  }, []);
+    dispatch(fetchWallet());
+  }, [dispatch]);
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleRechargeSubmit = async (e: React.FormEvent) => {
+  const handleRechargeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return; // Prevent duplicate clicks
-
     setErrorMsg('');
 
     const amt = parseFloat(customAmount || rechargeAmount);
@@ -57,22 +55,20 @@ export default function AgentWallet() {
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const res = await walletStore.rechargeWallet(amt, 'Wallet Auto UPI Topup');
-      if (res.success) {
-        setSuccessMsg(res.message);
+    recharge.run(async () => {
+      const result = await dispatch(rechargeWallet({ amount: amt, remarks: 'Wallet Auto UPI Topup' }));
+      if (rechargeWallet.fulfilled.match(result)) {
+        setSuccessMsg(result.payload);
         setCustomAmount('');
         setTimeout(() => {
           setIsModalOpen(false);
           setSuccessMsg('');
         }, 2000);
-      } else {
-        setErrorMsg(res.message);
+        return true;
       }
-    } finally {
-      setIsSubmitting(false);
-    }
+      setErrorMsg(result.payload || 'Recharge request failed.');
+      return false;
+    });
   };
 
   const filteredTxns = transactions.filter(t => {
@@ -98,7 +94,11 @@ export default function AgentWallet() {
             </div>
             <div className="text-3xl sm:text-4xl font-black text-white tracking-tight flex items-baseline gap-1">
               <span className="text-xl sm:text-2xl text-amber-400">₹</span>
-              <span>{balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              {isLoading ? (
+                <Skeleton className="h-9 w-36 bg-white/20!" />
+              ) : (
+                <span>{balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              )}
             </div>
             <p className="text-xs text-blue-200">
               Instant auto-deduction for MP Online & Citizen Services fees.
@@ -181,7 +181,9 @@ export default function AgentWallet() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredTxns.length === 0 ? (
+                {isLoading ? (
+                  <SkeletonTableRows rows={5} cols={6} />
+                ) : filteredTxns.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-slate-400 text-xs">
                       No wallet transactions found.
@@ -190,7 +192,8 @@ export default function AgentWallet() {
                 ) : (
                     filteredTxns.map((txn) => {
                       const displayAppId = txn.appId || (txn.remarks ? (txn.remarks.match(/\[(?:App|Application|Task)\s*ID:\s*([^\]]+)\]/i)?.[1] || txn.remarks.match(/(APP-\d{4}-\d{4})/i)?.[1]) : null);
-                      const finalAppId = displayAppId || ((txn.category === 'service_fee' || txn.category === 'refund') ? `APP-2026-${txn.txnNo.split('-').pop()}` : null);
+                      // Txn No se fake App ID guess nahi karna — sirf real App ID dikhana
+                      const finalAppId = displayAppId || null;
                       const cleanRemarks = txn.remarks ? txn.remarks.replace(/\s*\[(?:App|Application|Task)\s*ID:\s*[^\]]+\]/gi, '').trim() : '';
 
                       return (
@@ -331,20 +334,16 @@ export default function AgentWallet() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={isSubmitting}
+                    state={recharge.state}
+                    loadingText="Processing..."
+                    successText="Money Added!"
+                    errorText="Recharge Failed"
                     className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer min-w-[150px]"
                   >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin text-white" />
-                        <span>Processing...</span>
-                      </>
-                    ) : (
-                      <span>Proceed to Add ₹{customAmount || rechargeAmount}</span>
-                    )}
-                  </button>
+                    <span>Proceed to Add ₹{customAmount || rechargeAmount}</span>
+                  </ActionButton>
                 </div>
 
               </form>

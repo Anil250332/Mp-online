@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import apiClient from '../../api/client';
+import { useAsyncAction, useKeyedAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonTable } from '../../components/ui/Skeleton';
+import { getApiErrorMessage } from '../../store/apiError';
 import {
   Users,
   UserPlus,
@@ -15,8 +19,7 @@ import {
   Mail,
   MapPin,
   CheckCircle,
-  XCircle,
-  Loader2
+  XCircle
 } from 'lucide-react';
 
 interface UserItem {
@@ -58,7 +61,8 @@ const formatDateTime = (dateStr?: string) => {
     return dateStr;
   }
   try {
-    const d = new Date(dateStr);
+    // Safari ke liye 'YYYY-MM-DD HH:MM:SS' -> ISO 'T' format
+    const d = new Date(dateStr.replace(' ', 'T'));
     if (isNaN(d.getTime())) return dateStr;
     return d.toLocaleString('en-IN', {
       day: '2-digit',
@@ -79,9 +83,11 @@ export default function AdminUsers() {
   const [activeTab, setActiveTab] = useState<'ALL' | 'distributor' | 'manager' | 'sub_admin'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
+  const [pageError, setPageError] = useState('');
+  const createAction = useAsyncAction();
+  const toggleAction = useKeyedAsyncAction();
 
   // Add User Form
   const [form, setForm] = useState({
@@ -116,41 +122,45 @@ export default function AdminUsers() {
   const filteredUsers = users.filter(u => {
     const matchesTab = activeTab === 'ALL' || u.role === activeTab;
     const matchesSearch = !searchTerm ||
-      u.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.mobile.includes(searchTerm) ||
-      u.email.toLowerCase().includes(searchTerm.toLowerCase());
+      (u.fullName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (u.mobile || '').includes(searchTerm) ||
+      (u.email || '').toLowerCase().includes(searchTerm.toLowerCase());
     return matchesTab && matchesSearch;
   });
 
-  const handleAddUser = async (e: React.FormEvent) => {
+  const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();
-    setFormLoading(true);
-    setFormError('');
-    setFormSuccess('');
-
-    try {
-      const response = await apiClient.post('/users', form);
-      if (response.data.status === 'success') {
-        setFormSuccess(response.data.message);
-        setForm({ fullName: '', mobile: '', email: '', password: '', role: 'distributor', aadhaar: '', district: '', address: '', officeName: '' });
-        await fetchUsers();
-        setTimeout(() => { setShowAddModal(false); setFormSuccess(''); }, 1500);
+    createAction.run(async () => {
+      setFormError('');
+      setFormSuccess('');
+      let message = '';
+      try {
+        const response = await apiClient.post('/users', form);
+        if (response.data.status !== 'success') throw new Error(response.data.message || 'Failed to create user.');
+        message = response.data.message;
+      } catch (err) {
+        setFormError(getApiErrorMessage(err, 'Failed to create user.'));
+        throw err;
       }
-    } catch (err: any) {
-      setFormError(err.response?.data?.message || 'Failed to create user.');
-    } finally {
-      setFormLoading(false);
-    }
+      setFormSuccess(message);
+      setForm({ fullName: '', mobile: '', email: '', password: '', role: 'distributor', aadhaar: '', district: '', address: '', officeName: '' });
+      await fetchUsers();
+      setTimeout(() => { setShowAddModal(false); setFormSuccess(''); }, 1500);
+    });
   };
 
-  const handleToggle = async (userId: string) => {
-    try {
-      await apiClient.patch(`/users/${userId}/toggle`);
+  // Per-row 3-stage toggle (activate / deactivate)
+  const handleToggle = (userId: string) =>
+    toggleAction.run(`toggle-${userId}`, async () => {
+      setPageError('');
+      try {
+        await apiClient.patch(`/users/${userId}/toggle`);
+      } catch (e) {
+        setPageError(getApiErrorMessage(e, 'Failed to update user status.'));
+        throw e;
+      }
       await fetchUsers();
-    } catch (e) {
-      console.error('Toggle failed:', e);
-    }
-  };
+    });
 
   const tabs = [
     { key: 'ALL', label: 'All Users', count: users.length },
@@ -204,6 +214,16 @@ export default function AdminUsers() {
           ))}
         </div>
 
+        {pageError && (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold px-3 py-2.5 rounded-xl">
+            <XCircle className="h-4 w-4 shrink-0" />
+            <span>{pageError}</span>
+            <button onClick={() => setPageError('')} className="ml-auto p-0.5 hover:bg-red-100 rounded">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Search Bar */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -218,11 +238,8 @@ export default function AdminUsers() {
 
         {/* Users Table */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-          {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
-              <span className="ml-2 text-sm text-slate-500">Loading users...</span>
-            </div>
+          {loading && users.length === 0 ? (
+            <SkeletonTable rows={6} cols={7} className="border-0 rounded-none" />
           ) : filteredUsers.length === 0 ? (
             <div className="text-center py-16">
               <Users className="h-10 w-10 text-slate-300 mx-auto mb-2" />
@@ -306,8 +323,12 @@ export default function AdminUsers() {
                         <div><span className="text-[9px] font-bold uppercase text-slate-400"> </span><strong>{formatDateTime(u.requestedAt || u.createdAt)}</strong></div>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <button
+                        <ActionButton
+                          state={toggleAction.stateOf(`toggle-${u.id}`)}
                           onClick={() => handleToggle(u.id)}
+                          loadingText={u.isActive ? 'Deactivating...' : 'Activating...'}
+                          successText="Updated"
+                          errorText="Failed"
                           className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
                             u.isActive
                               ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
@@ -317,7 +338,7 @@ export default function AdminUsers() {
                         >
                           {u.isActive ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                           {u.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
+                        </ActionButton>
                       </td>
                     </tr>
                   ))}
@@ -480,17 +501,16 @@ export default function AdminUsers() {
                 />
               </div>
 
-              <button
+              <ActionButton
                 type="submit"
-                disabled={formLoading}
+                state={createAction.state}
+                loadingText="Creating..."
+                successText="User Created!"
+                errorText="Failed"
                 className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold py-3 rounded-xl shadow-lg transition-all disabled:opacity-50"
               >
-                {formLoading ? (
-                  <><Loader2 className="h-4 w-4 animate-spin" /> Creating...</>
-                ) : (
-                  <><UserPlus className="h-4 w-4" /> Create {roleLabels[form.role]}</>
-                )}
-              </button>
+                <UserPlus className="h-4 w-4" /> Create {roleLabels[form.role]}
+              </ActionButton>
             </form>
           </div>
         </div>

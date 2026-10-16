@@ -44,6 +44,7 @@ import AdminUsers from './pages/admin/AdminUsers';
 import AdminOperators from './pages/admin/AdminOperators';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminWithdrawalRequests from './pages/admin/AdminWithdrawalRequests';
+import ManagerWithdrawalRequests from './pages/manager/ManagerWithdrawalRequests';
 import AdminTaskVerification from './pages/admin/AdminTaskVerification';
 
 export const App: React.FC = () => {
@@ -415,15 +416,7 @@ export const App: React.FC = () => {
             path="/manager/withdrawal-requests"
             element={
               <ProtectedRoute allowedRoles={['manager']}>
-                <AdminWithdrawalRequests />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/manager/task-verification"
-            element={
-              <ProtectedRoute allowedRoles={['manager']}>
-                <AdminTaskVerification />
+                <ManagerWithdrawalRequests />
               </ProtectedRoute>
             }
           />

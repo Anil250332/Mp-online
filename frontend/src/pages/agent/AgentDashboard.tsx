@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
-import { serviceStore, type ServiceItem } from '../../services/serviceStore';
-import { walletStore } from '../../services/walletStore';
+import { useAppDispatch, useAppSelector, selectServices, selectServicesStatus, selectWalletBalance, selectWalletStatus, isInitialLoading } from '../../store/hooks';
+import { fetchServices } from '../../store/slices/servicesSlice';
+import { fetchWallet } from '../../store/slices/walletSlice';
+import { Skeleton, SkeletonGrid } from '../../components/ui/Skeleton';
+import { FILE_BASE_URL } from '../../api/client';
 import {
   Layers,
   ArrowRight,
@@ -16,20 +19,22 @@ import {
 export const AgentDashboard: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [activeServices, setActiveServices] = useState<ServiceItem[]>([]);
-  const [walletBalance, setWalletBalance] = useState<number>(0);
+  const dispatch = useAppDispatch();
+
+  // Redux se services + wallet (frozen state — sirf read karna hai)
+  const services = useAppSelector(selectServices);
+  const servicesStatus = useAppSelector(selectServicesStatus);
+  const walletBalance = useAppSelector(selectWalletBalance);
+  const walletStatus = useAppSelector(selectWalletStatus);
+  const activeServices = useMemo(() => services.filter(s => s.isActive), [services]);
+  const servicesLoading = isInitialLoading(servicesStatus, services.length);
+  // Wallet balance ka pehla load (status idle/loading aur abhi tak succeed nahi hua)
+  const walletLoading = walletStatus === 'idle' || (walletStatus === 'loading' && walletBalance === 0);
 
   useEffect(() => {
-    const update = () => {
-      setActiveServices(serviceStore.getActiveServices());
-      setWalletBalance(walletStore.getBalance());
-    };
-    update();
-    serviceStore.syncBackend();
-    const unsub1 = serviceStore.subscribe(update);
-    const unsub2 = walletStore.subscribe(update);
-    return () => { unsub1(); unsub2(); };
-  }, []);
+    dispatch(fetchServices());
+    dispatch(fetchWallet());
+  }, [dispatch]);
 
   return (
     <DashboardLayout>
@@ -67,7 +72,11 @@ export const AgentDashboard: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-emerald-100 uppercase tracking-wider">Wallet Balance</span>
               </div>
-              <p className="text-3xl font-black">₹{walletBalance.toFixed(0)}</p>
+              {walletLoading ? (
+                <Skeleton className="h-9 w-24 bg-white/25!" />
+              ) : (
+                <p className="text-3xl font-black">₹{walletBalance.toFixed(0)}</p>
+              )}
               <p className="text-[10px] text-emerald-200 mt-1">Available for service payments</p>
             </div>
           </div>
@@ -81,7 +90,11 @@ export const AgentDashboard: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-blue-100 uppercase tracking-wider">Active Services</span>
               </div>
-              <p className="text-3xl font-black">{activeServices.length}</p>
+              {servicesLoading ? (
+                <Skeleton className="h-9 w-12 bg-white/25!" />
+              ) : (
+                <p className="text-3xl font-black">{activeServices.length}</p>
+              )}
               <p className="text-[10px] text-blue-200 mt-1">Services available to apply</p>
             </div>
           </div>
@@ -122,6 +135,9 @@ export const AgentDashboard: React.FC = () => {
             </button>
           </div>
 
+          {servicesLoading ? (
+            <SkeletonGrid count={10} className="xl:grid-cols-5 gap-5" />
+          ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
             {activeServices.length === 0 ? (
               <div className="col-span-full py-16 text-center text-slate-400 text-sm bg-white rounded-2xl border border-slate-200">
@@ -142,7 +158,7 @@ export const AgentDashboard: React.FC = () => {
                     <div className="h-20 w-20 rounded-2xl bg-blue-50/60 border border-blue-100 flex items-center justify-center p-2 group-hover:bg-blue-600 group-hover:border-blue-500 transition-all duration-200 shadow-xs overflow-hidden shrink-0">
                       {service.iconUrl ? (
                         <img
-                          src={service.iconUrl.startsWith('http') || service.iconUrl.startsWith('data:') ? service.iconUrl : `http://localhost:5000${service.iconUrl}`}
+                          src={service.iconUrl.startsWith('http') || service.iconUrl.startsWith('data:') ? service.iconUrl : `${FILE_BASE_URL}${service.iconUrl}`}
                           alt={service.name}
                           className="h-full w-full object-contain p-0.5"
                           onError={(e) => { e.currentTarget.style.display = 'none'; }}
@@ -178,6 +194,7 @@ export const AgentDashboard: React.FC = () => {
               })
             )}
           </div>
+          )}
         </div>
 
       </div>

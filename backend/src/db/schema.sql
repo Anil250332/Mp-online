@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS application_documents (
     doc_label VARCHAR(100) NOT NULL,
     file_name VARCHAR(255) NOT NULL,
     file_path VARCHAR(500) NOT NULL,
-    mime_type VARCHAR(50) NOT NULL,
+    mime_type VARCHAR(150) NOT NULL,
     file_size_kb INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE

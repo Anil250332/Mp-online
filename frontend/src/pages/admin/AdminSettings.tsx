@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import apiClient from '../../api/client';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton } from '../../components/ui/Skeleton';
+import { getApiErrorMessage } from '../../store/apiError';
 import {
   Settings,
   Lock,
@@ -17,14 +21,16 @@ export default function AdminSettings() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [passLoading, setPassLoading] = useState(false);
+  const passAction = useAsyncAction();
   const [passSuccess, setPassSuccess] = useState('');
   const [passError, setPassError] = useState('');
 
   // Support contact state
   const [helplineNumber, setHelplineNumber] = useState('');
   const [supportEmail, setSupportEmail] = useState('');
-  const [contactLoading, setContactLoading] = useState(false);
+  const contactAction = useAsyncAction();
+  // Settings values aane tak form ki jagah skeleton
+  const [settingsLoading, setSettingsLoading] = useState(true);
   const [contactSuccess, setContactSuccess] = useState('');
   const [contactError, setContactError] = useState('');
 
@@ -39,6 +45,8 @@ export default function AdminSettings() {
         }
       } catch (e) {
         console.error('Failed to fetch settings:', e);
+      } finally {
+        setSettingsLoading(false);
       }
     };
     fetchSettings();
@@ -65,25 +73,23 @@ export default function AdminSettings() {
       return;
     }
 
-    setPassLoading(true);
-    try {
-      const response = await apiClient.post('/auth/change-password', {
-        currentPassword,
-        newPassword
-      });
-
-      if (response.data.status === 'success') {
-        setPassSuccess('Admin Password successfully update ho gaya hai!');
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setTimeout(() => setPassSuccess(''), 3000);
+    passAction.run(async () => {
+      try {
+        const response = await apiClient.post('/auth/change-password', {
+          currentPassword,
+          newPassword
+        });
+        if (response.data.status !== 'success') throw new Error(response.data.message || 'Password update nahi ho saka.');
+      } catch (err) {
+        setPassError(getApiErrorMessage(err, 'Password update nahi ho saka. Kripya Current Password check karein.'));
+        throw err;
       }
-    } catch (err: any) {
-      setPassError(err.response?.data?.message || 'Password update nahi ho saka. Kripya Current Password check karein.');
-    } finally {
-      setPassLoading(false);
-    }
+      setPassSuccess('Admin Password successfully update ho gaya hai!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setPassSuccess(''), 3000);
+    });
   };
 
   // Support contact update handler
@@ -97,22 +103,20 @@ export default function AdminSettings() {
       return;
     }
 
-    setContactLoading(true);
-    try {
-      const response = await apiClient.put('/settings', {
-        helplineNumber: helplineNumber.trim(),
-        supportEmail: supportEmail.trim()
-      });
-
-      if (response.data.status === 'success') {
-        setContactSuccess('Helpline Number aur Support Email successfully update ho gaye hain! Ab ye sabhi profile pages me dynamic dikhenge.');
-        setTimeout(() => setContactSuccess(''), 4000);
+    contactAction.run(async () => {
+      try {
+        const response = await apiClient.put('/settings', {
+          helplineNumber: helplineNumber.trim(),
+          supportEmail: supportEmail.trim()
+        });
+        if (response.data.status !== 'success') throw new Error(response.data.message || 'Settings update nahi ho payi.');
+      } catch (err) {
+        setContactError(getApiErrorMessage(err, 'Settings update nahi ho payi.'));
+        throw err;
       }
-    } catch (err: any) {
-      setContactError(err.response?.data?.message || 'Settings update nahi ho payi.');
-    } finally {
-      setContactLoading(false);
-    }
+      setContactSuccess('Helpline Number aur Support Email successfully update ho gaye hain! Ab ye sabhi profile pages me dynamic dikhenge.');
+      setTimeout(() => setContactSuccess(''), 4000);
+    });
   };
 
   return (
@@ -197,20 +201,17 @@ export default function AdminSettings() {
               </div>
 
               <div className="pt-2">
-                <button
+                <ActionButton
                   type="submit"
-                  disabled={passLoading}
+                  state={passAction.state}
+                  loadingText="Updating Password..."
+                  successText="Password Updated!"
+                  errorText="Update Failed"
                   className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  {passLoading ? (
-                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                  ) : (
-                    <>
-                      <Key className="h-4 w-4" />
-                      <span>Update Admin Password</span>
-                    </>
-                  )}
-                </button>
+                  <Key className="h-4 w-4" />
+                  <span>Update Admin Password</span>
+                </ActionButton>
               </div>
             </form>
           </div>
@@ -240,6 +241,17 @@ export default function AdminSettings() {
               </div>
             )}
 
+            {settingsLoading ? (
+              <div className="space-y-4" aria-busy="true">
+                {[0, 1].map(i => (
+                  <div key={i} className="space-y-1.5">
+                    <Skeleton className="h-3 w-40" />
+                    <Skeleton className="h-10 w-full rounded-xl" />
+                  </div>
+                ))}
+                <Skeleton className="h-10 w-full rounded-xl mt-2" />
+              </div>
+            ) : (
             <form onSubmit={handleContactSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -276,22 +288,20 @@ export default function AdminSettings() {
               </div>
 
               <div className="pt-2">
-                <button
+                <ActionButton
                   type="submit"
-                  disabled={contactLoading}
+                  state={contactAction.state}
+                  loadingText="Saving..."
+                  successText="Settings Saved!"
+                  errorText="Save Failed"
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  {contactLoading ? (
-                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4" />
-                      <span>Save System Support Settings</span>
-                    </>
-                  )}
-                </button>
+                  <Save className="h-4 w-4" />
+                  <span>Save System Support Settings</span>
+                </ActionButton>
               </div>
             </form>
+            )}
           </div>
 
         </div>

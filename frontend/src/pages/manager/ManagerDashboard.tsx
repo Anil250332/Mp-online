@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import apiClient from '../../api/client';
+import { SkeletonStatCards, SkeletonTable } from '../../components/ui/Skeleton';
 import {
   Layers,
   UserCheck,
@@ -22,6 +23,8 @@ export const ManagerDashboard: React.FC = () => {
   const [complaintsCount, setComplaintsCount] = useState(0);
   const [recentApplications, setRecentApplications] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // Skeleton sirf pehli load par (refresh par purana data dikhta rahe)
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const fetchManagerData = useCallback(async () => {
     setIsLoading(true);
@@ -30,7 +33,10 @@ export const ManagerDashboard: React.FC = () => {
       const usersRes = await apiClient.get('/users').catch(() => ({ data: { data: [] } }));
       if (usersRes.data?.status === 'success' || Array.isArray(usersRes.data?.data)) {
         const list = usersRes.data.data || [];
-        setActiveOperatorsCount(list.filter((u: any) => u.role === 'operator' && (u.status === 'active' || u.approvalStatus === 'approved')).length);
+        // Backend 'isActive' (boolean) bhejta hai, 'status' field nahi — active + non-pending/rejected operator hi count
+        setActiveOperatorsCount(list.filter((u: any) =>
+          u.role === 'operator' && u.isActive && !['pending', 'rejected'].includes(String(u.approvalStatus || '').toLowerCase())
+        ).length);
         setShopsCount(list.filter((u: any) => u.role === 'agent' || u.role === 'shop').length);
       }
 
@@ -39,19 +45,22 @@ export const ManagerDashboard: React.FC = () => {
       if (queueRes.data?.status === 'success' || Array.isArray(queueRes.data?.data)) {
         const apps = queueRes.data.data || [];
         setRecentApplications(apps.slice(0, 6));
-        setPendingTasksCount(apps.filter((a: any) => a.status === 'completed' || a.status === 'processing' || a.status === 'pending').length);
+        // "Awaiting Approval" = sirf operator dwara completed tasks (TaskVerification page jaisa)
+        setPendingTasksCount(apps.filter((a: any) => String(a.status).toLowerCase() === 'completed').length);
       }
 
       // 3. Fetch Complaints
       const compRes = await apiClient.get('/complaints').catch(() => ({ data: { data: [] } }));
       if (compRes.data?.status === 'success' || Array.isArray(compRes.data?.data)) {
         const comps = compRes.data.data || [];
-        setComplaintsCount(comps.filter((c: any) => c.status === 'open' || c.status === 'pending').length);
+        // Complaint status OPEN / IN_REVIEW dono abhi pending hain
+        setComplaintsCount(comps.filter((c: any) => ['open', 'in_review', 'pending'].includes(String(c.status).toLowerCase())).length);
       }
     } catch (e) {
       console.error('Failed to load manager dashboard data:', e);
     } finally {
       setIsLoading(false);
+      setHasLoaded(true);
     }
   }, []);
 
@@ -105,6 +114,9 @@ export const ManagerDashboard: React.FC = () => {
         </div>
 
         {/* Real-time Themed KPI Stat Cards */}
+        {!hasLoaded ? (
+          <SkeletonStatCards count={4} />
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           
           {/* Pending Task Verifications */}
@@ -176,6 +188,7 @@ export const ManagerDashboard: React.FC = () => {
           </Link>
 
         </div>
+        )}
 
         {/* Live Citizen Applications Feed */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-4">
@@ -195,7 +208,9 @@ export const ManagerDashboard: React.FC = () => {
             </Link>
           </div>
 
-          {recentApplications.length === 0 ? (
+          {!hasLoaded ? (
+            <SkeletonTable rows={4} cols={6} />
+          ) : recentApplications.length === 0 ? (
             <div className="py-8 text-center text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
               No recent applications recorded yet.
             </div>

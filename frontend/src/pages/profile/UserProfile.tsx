@@ -14,18 +14,22 @@ import {
   AlertCircle,
   ShieldCheck,
   Building2,
-  Loader2,
   Headphones
 } from 'lucide-react';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton } from '../../components/ui/Skeleton';
 
 export default function UserProfile() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
+  const profileLoading = authLoading || !user;
 
   // Password Form State
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [passLoading, setPassLoading] = useState(false);
+  const passAction = useAsyncAction();
+  const [supportLoading, setSupportLoading] = useState(true);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -47,12 +51,14 @@ export default function UserProfile() {
         }
       } catch (e) {
         console.error('Failed to fetch support settings:', e);
+      } finally {
+        setSupportLoading(false);
       }
     };
     fetchSettings();
   }, []);
 
-  const handlePasswordUpdate = async (e: React.FormEvent) => {
+  const handlePasswordUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -72,25 +78,28 @@ export default function UserProfile() {
       return;
     }
 
-    setPassLoading(true);
-    try {
-      const res = await apiClient.post('/auth/change-password', {
-        currentPassword,
-        newPassword
-      });
+    passAction.run(async () => {
+      try {
+        const res = await apiClient.post('/auth/change-password', {
+          currentPassword,
+          newPassword
+        });
 
-      if (res.data.status === 'success') {
-        setSuccessMsg(res.data.message || 'Password safaltapoorvak update ho gaya!');
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setTimeout(() => setSuccessMsg(''), 5000);
+        if (res.data.status === 'success') {
+          setSuccessMsg(res.data.message || 'Password safaltapoorvak update ho gaya!');
+          setCurrentPassword('');
+          setNewPassword('');
+          setConfirmPassword('');
+          setTimeout(() => setSuccessMsg(''), 5000);
+          return true;
+        }
+        setErrorMsg(res.data.message || 'Password update karne me samasya aayi.');
+        return false;
+      } catch (err: any) {
+        setErrorMsg(err.response?.data?.message || err.message || 'Password update karne me samasya aayi. Kripya punah prayas karein.');
+        return false;
       }
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Password update karne me samasya aayi. Kripya punah prayas karein.');
-    } finally {
-      setPassLoading(false);
-    }
+    });
   };
 
   const getRoleBadge = () => {
@@ -137,9 +146,9 @@ export default function UserProfile() {
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-1 flex items-center gap-2">
-                <span>ID: <strong className="font-mono text-slate-700">{(user as any)?.user_code || (user as any)?.userCode || `USR-MP-${user?.id || '101'}`}</strong></span>
+                <span>ID: <strong className="font-mono text-slate-700">{(user as any)?.user_code || (user as any)?.userCode || (user?.id ? `USR-MP-${user.id}` : '—')}</strong></span>
                 <span>•</span>
-                <span>Mobile: <strong className="text-slate-700">{user?.mobile}</strong></span>
+                <span>Mobile: <strong className="text-slate-700">{user?.mobile || '—'}</strong></span>
               </p>
             </div>
           </div>
@@ -159,14 +168,21 @@ export default function UserProfile() {
                 </h2>
               </div>
 
+              {profileLoading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" aria-busy="true">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton key={i} className="h-14 w-full rounded-xl" />
+                  ))}
+                </div>
+              ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
+
                 {/* Full Name */}
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/60">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Full Name</span>
                   <div className="text-xs font-bold text-slate-800 mt-0.5 flex items-center gap-2">
                     <User className="h-3.5 w-3.5 text-blue-600" />
-                    <span>{user?.full_name || 'Not Provided'}</span>
+                    <span>{user?.full_name || '—'}</span>
                   </div>
                 </div>
 
@@ -175,7 +191,7 @@ export default function UserProfile() {
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Registered Mobile</span>
                   <div className="text-xs font-bold text-slate-800 mt-0.5 flex items-center gap-2">
                     <Phone className="h-3.5 w-3.5 text-emerald-600" />
-                    <span>{user?.mobile || 'Not Provided'}</span>
+                    <span>{user?.mobile || '—'}</span>
                   </div>
                 </div>
 
@@ -184,7 +200,7 @@ export default function UserProfile() {
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Email Address</span>
                   <div className="text-xs font-bold text-slate-800 mt-0.5 flex items-center gap-2">
                     <Mail className="h-3.5 w-3.5 text-indigo-600" />
-                    <span>{user?.email || 'portal-user@mponline.gov.in'}</span>
+                    <span>{user?.email || '—'}</span>
                   </div>
                 </div>
 
@@ -204,7 +220,7 @@ export default function UserProfile() {
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Designated District</span>
                   <div className="text-xs font-bold text-slate-800 mt-0.5 flex items-center gap-2">
                     <Building2 className="h-3.5 w-3.5 text-purple-600" />
-                    <span>{user?.district || 'Gwalior'}</span>
+                    <span>{user?.district || '—'}</span>
                   </div>
                 </div>
 
@@ -213,11 +229,12 @@ export default function UserProfile() {
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tehsil / Ward</span>
                   <div className="text-xs font-bold text-slate-800 mt-0.5 flex items-center gap-2">
                     <MapPin className="h-3.5 w-3.5 text-rose-600" />
-                    <span>{user?.tehsil || 'Gwalior Urban'} {user?.ward_no ? `(Ward ${user.ward_no})` : ''}</span>
+                    <span>{user?.tehsil || (user?.ward_no ? '' : '—')} {user?.ward_no ? `(Ward ${user.ward_no})` : ''}</span>
                   </div>
                 </div>
 
               </div>
+              )}
 
               {/* Complete Address */}
               {user?.address && (
@@ -240,8 +257,17 @@ export default function UserProfile() {
                 </div>
               </div>
               <div className="text-left sm:text-right">
-                <span className="text-xs font-bold text-blue-700 block">{supportInfo.helplineNumber}</span>
-                <span className="text-[11px] text-slate-500 block">{supportInfo.supportEmail}</span>
+                {supportLoading ? (
+                  <div className="space-y-1.5 sm:flex sm:flex-col sm:items-end">
+                    <Skeleton className="h-3 w-32" />
+                    <Skeleton className="h-3 w-40" />
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-xs font-bold text-blue-700 block">{supportInfo.helplineNumber}</span>
+                    <span className="text-[11px] text-slate-500 block">{supportInfo.supportEmail}</span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -315,14 +341,17 @@ export default function UserProfile() {
                   />
                 </div>
 
-                <button
+                <ActionButton
                   type="submit"
-                  disabled={passLoading}
+                  state={passAction.state}
+                  loadingText="Updating..."
+                  successText="Password Updated!"
+                  errorText="Update Failed"
                   className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-md transition-colors cursor-pointer flex items-center justify-center gap-2 mt-2"
                 >
-                  {passLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
+                  <Key className="h-4 w-4" />
                   <span>Update Password</span>
-                </button>
+                </ActionButton>
               </form>
 
             </div>

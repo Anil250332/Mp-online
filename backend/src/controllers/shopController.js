@@ -3,6 +3,13 @@ import crypto from 'crypto';
 import pool from '../config/db.js';
 import { sendUserApprovalEmail } from '../utils/mailer.js';
 
+// Distributor sirf apne network ke ya unassigned (self-registered) agents par action le sakta hai
+const isOutsideDistributorScope = (req, target) =>
+  req.user?.role === 'distributor' &&
+  target.distributor_id !== null &&
+  target.distributor_id !== undefined &&
+  Number(target.distributor_id) !== Number(req.user.id);
+
 /**
  * 1. Get All Shops with Status Filters
  * GET /api/shops
@@ -24,6 +31,13 @@ export const getShops = async (req, res) => {
     `;
 
     const params = [];
+
+    // Distributor sirf apne network ke agents (+ purane / self-registered unassigned agents) dekhta hai
+    if (req.user?.role === 'distributor') {
+      query += ' AND (u.distributor_id = ? OR u.distributor_id IS NULL)';
+      params.push(req.user.id);
+    }
+
     if (status) {
       if (status === 'active') {
         query += ' AND u.is_active = true AND u.approval_status = "approved" AND ur.id IS NULL';
@@ -101,6 +115,8 @@ export const addShop = async (req, res) => {
 
     const uuid = crypto.randomUUID();
     const passwordHash = await bcrypt.hash(password, 10);
+    // Distributor dwara banaya agent usi distributor ke network me link hoga
+    const distributorId = req.user?.role === 'distributor' ? req.user.id : null;
 
     await connection.beginTransaction();
 
@@ -108,9 +124,9 @@ export const addShop = async (req, res) => {
     const [userRes] = await connection.query(
       `INSERT INTO users (
         uuid, role, full_name, mobile, email, password_hash, shop_name,
-        aadhaar_number, address, approval_status, is_active
-      ) VALUES (?, 'agent', ?, ?, ?, ?, ?, ?, ?, 'approved', true)`,
-      [uuid, ownerName, mobile.trim(), email || null, passwordHash, shopName, aadhaar || null, address]
+        aadhaar_number, address, distributor_id, approval_status, is_active
+      ) VALUES (?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, 'approved', true)`,
+      [uuid, ownerName, mobile.trim(), email || null, passwordHash, shopName, aadhaar || null, address, distributorId]
     );
 
     const newUserId = userRes.insertId;
@@ -121,9 +137,9 @@ export const addShop = async (req, res) => {
     await connection.query(
       `INSERT INTO shops (
         shop_id_code, user_id, owner_name, shop_name, mobile, email,
-        aadhaar_number, full_address, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [shopCode, newUserId, ownerName, shopName, mobile.trim(), email || null, aadhaar || null, address]
+        aadhaar_number, full_address, distributor_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [shopCode, newUserId, ownerName, shopName, mobile.trim(), email || null, aadhaar || null, address, distributorId]
     );
 
     // 3. Create wallet
@@ -162,16 +178,28 @@ export const approveShop = async (req, res) => {
     const { id } = req.params;
     await connection.beginTransaction();
 
-    const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
+    const [users] = await connection.query('SELECT full_name, email, role, distributor_id FROM users WHERE id = ? FOR UPDATE', [id]);
+
+    // Shop endpoints sirf Agent (shop) accounts par kaam karenge
+    if (users.length === 0 || users[0].role !== 'agent' || isOutsideDistributorScope(req, users[0])) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'Shop not found.' });
+    }
 
     await connection.query(
       'UPDATE users SET approval_status = ?, is_active = true WHERE id = ?',
       ['approved', id]
     );
 
+    // Distributor ne verify kiya -> agent uske network me link
+    if (req.user?.role === 'distributor' && !users[0].distributor_id) {
+      await connection.query('UPDATE users SET distributor_id = ? WHERE id = ?', [req.user.id, id]);
+      await connection.query('UPDATE shops SET distributor_id = ? WHERE user_id = ?', [req.user.id, id]);
+    }
+
     await connection.query(
-      'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
-      ['active', id, id]
+      'UPDATE shops SET status = ? WHERE user_id = ?',
+      ['active', id]
     );
 
     await connection.query(
@@ -210,7 +238,13 @@ export const rejectShop = async (req, res) => {
     const { id } = req.params;
     await connection.beginTransaction();
 
-    const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
+    const [users] = await connection.query('SELECT full_name, email, role, distributor_id FROM users WHERE id = ? FOR UPDATE', [id]);
+
+    // Shop endpoints sirf Agent (shop) accounts par kaam karenge
+    if (users.length === 0 || users[0].role !== 'agent' || isOutsideDistributorScope(req, users[0])) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'Shop not found.' });
+    }
 
     await connection.query(
       'UPDATE users SET approval_status = ?, is_active = false WHERE id = ?',
@@ -218,8 +252,8 @@ export const rejectShop = async (req, res) => {
     );
 
     await connection.query(
-      'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
-      ['rejected', id, id]
+      'UPDATE shops SET status = ? WHERE user_id = ?',
+      ['rejected', id]
     );
 
     await connection.commit();
@@ -256,7 +290,21 @@ export const requestDeleteShop = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Reason for deletion is required.' });
     }
 
-    const requestedBy = req.user?.id || 1;
+    const requestedBy = req.user.id;
+
+    const [targets] = await pool.query("SELECT id, distributor_id FROM users WHERE id = ? AND role = 'agent'", [id]);
+    if (targets.length === 0 || isOutsideDistributorScope(req, targets[0])) {
+      return res.status(404).json({ status: 'error', message: 'Shop not found.' });
+    }
+
+    // Duplicate pending request se bachav
+    const [existingReq] = await pool.query(
+      "SELECT id FROM user_requests WHERE target_user_id = ? AND request_type = 'delete_agent' AND status = 'pending' LIMIT 1",
+      [id]
+    );
+    if (existingReq.length > 0) {
+      return res.status(400).json({ status: 'error', message: 'Is shop ke liye deletion request pehle se pending hai.' });
+    }
 
     await pool.query(
       `INSERT INTO user_requests (requested_by, target_user_id, request_type, reason, status)
@@ -279,16 +327,22 @@ export const approveDeletion = async (req, res) => {
   const connection = await pool.getConnection();
   try {
     const { id } = req.params;
-    const reviewedBy = req.user?.id || 1;
+    const reviewedBy = req.user.id;
 
     await connection.beginTransaction();
+
+    const [targets] = await connection.query("SELECT id FROM users WHERE id = ? AND role = 'agent' FOR UPDATE", [id]);
+    if (targets.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'Shop not found.' });
+    }
 
     // Deactivate shop user
     await connection.query('UPDATE users SET is_active = false, approval_status = "rejected" WHERE id = ?', [id]);
 
     // Mark request approved
     await connection.query(
-      'UPDATE user_requests SET status = "approved", reviewed_by = ?, reviewed_at = NOW() WHERE target_user_id = ? AND request_type = "delete_agent"',
+      'UPDATE user_requests SET status = "approved", reviewed_by = ?, reviewed_at = NOW() WHERE target_user_id = ? AND request_type = "delete_agent" AND status = "pending"',
       [reviewedBy, id]
     );
 

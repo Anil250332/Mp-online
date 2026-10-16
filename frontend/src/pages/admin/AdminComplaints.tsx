@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { useAuth } from '../../context/AuthContext';
-import { complaintStore, type ComplaintTicket } from '../../services/complaintStore';
+import { useAppDispatch, useAppSelector, selectComplaints, selectComplaintsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchComplaints, updateComplaintStatus, sortComplaints, type ComplaintTicket } from '../../store/slices/complaintsSlice';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   Headphones,
   CheckCircle2,
@@ -12,12 +15,16 @@ import {
   User as UserIcon,
   Tag,
   FileText,
-  Loader2
+  XCircle
 } from 'lucide-react';
 
 export default function AdminComplaints() {
-  const { user } = useAuth();
-  const [tickets, setTickets] = useState<ComplaintTicket[]>([]);
+  const dispatch = useAppDispatch();
+  const rawTickets = useAppSelector(selectComplaints);
+  const complaintsStatus = useAppSelector(selectComplaintsStatus);
+  // Status priority + numeric id (naya pehle) — sortComplaints copy return karta hai, frozen state safe
+  const tickets = useMemo(() => sortComplaints(rawTickets), [rawTickets]);
+  const showSkeleton = isInitialLoading(complaintsStatus, rawTickets.length);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'CLOSED'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -27,67 +34,50 @@ export default function AdminComplaints() {
   const [status, setStatus] = useState<'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'CLOSED'>('IN_REVIEW');
   const [resolutionNote, setResolutionNote] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const saveAction = useAsyncAction();
 
+  // Page open hote hi fresh tickets fetch (pehle mount par refresh nahi hota tha)
   useEffect(() => {
-    const updateTickets = () => {
-      setTickets(complaintStore.getComplaints());
-    };
-
-    updateTickets();
-    const unsubscribe = complaintStore.subscribe(updateTickets);
-    return unsubscribe;
-  }, []);
+    dispatch(fetchComplaints());
+  }, [dispatch]);
 
   const handleOpenModal = (ticket: ComplaintTicket) => {
     setSelectedTicket(ticket);
     setStatus(ticket.status);
     setResolutionNote(ticket.resolutionNote || '');
+    setErrorMsg('');
   };
 
-  const [isSaving, setIsSaving] = useState(false);
-
-  const handleSaveStatus = async (e: React.FormEvent) => {
+  const handleSaveStatus = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTicket || isSaving) return;
+    const ticket = selectedTicket;
+    if (!ticket) return;
 
-    setIsSaving(true);
-    try {
-      await complaintStore.updateStatus(
-        selectedTicket.id,
-        status,
-        resolutionNote,
-        user?.full_name || 'Admin'
-      );
-
-      setSuccessMsg(`Status for ticket "${selectedTicket.ticketNo}" updated to ${status}!`);
+    saveAction.run(async () => {
+      setErrorMsg('');
+      const result = await dispatch(updateComplaintStatus({ ticketId: ticket.id, status, resolutionNote }));
+      if (!updateComplaintStatus.fulfilled.match(result)) {
+        const message = result.payload || 'Failed to update complaint status.';
+        setErrorMsg(message);
+        throw new Error(message);
+      }
+      setSuccessMsg(`Status for ticket "${ticket.ticketNo}" updated to ${status}!`);
       setSelectedTicket(null);
       setTimeout(() => setSuccessMsg(''), 3000);
-    } finally {
-      setIsSaving(false);
-    }
+    });
   };
 
-  const priorityMap: Record<string, number> = {
-    OPEN: 1,
-    IN_REVIEW: 2,
-    RESOLVED: 3,
-    CLOSED: 4
-  };
-
+  const term = searchTerm.toLowerCase();
   const filteredTickets = tickets.filter(t => {
     const matchesSearch =
-      t.ticketNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.raisedByName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.category.toLowerCase().includes(searchTerm.toLowerCase());
+      (t.ticketNo || '').toLowerCase().includes(term) ||
+      (t.subject || '').toLowerCase().includes(term) ||
+      (t.raisedByName || '').toLowerCase().includes(term) ||
+      (t.category || '').toLowerCase().includes(term);
 
     if (activeFilter === 'ALL') return matchesSearch;
     return matchesSearch && t.status === activeFilter;
-  }).sort((a, b) => {
-    const pA = priorityMap[a.status?.toUpperCase() || ''] || 5;
-    const pB = priorityMap[b.status?.toUpperCase() || ''] || 5;
-    if (pA !== pB) return pA - pB;
-    return (b.id || '').localeCompare(a.id || '');
   });
 
   return (
@@ -170,7 +160,9 @@ export default function AdminComplaints() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredTickets.length === 0 ? (
+                {showSkeleton ? (
+                  <SkeletonTableRows rows={5} cols={6} />
+                ) : filteredTickets.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-slate-400 text-xs">
                       No complaint tickets found in this filter.
@@ -375,8 +367,15 @@ export default function AdminComplaints() {
                 <p className="text-slate-500">Raised By: <strong>{selectedTicket.raisedByName} ({selectedTicket.raisedByRole})</strong></p>
               </div>
 
+              {errorMsg && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-semibold flex items-center gap-2">
+                  <XCircle className="h-4 w-4 text-red-600 shrink-0" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
               <form onSubmit={handleSaveStatus} className="space-y-4">
-                
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Select New Ticket Status *
@@ -415,20 +414,16 @@ export default function AdminComplaints() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={isSaving}
+                    state={saveAction.state}
+                    loadingText="Updating..."
+                    successText="Updated!"
+                    errorText="Update Failed"
                     className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer min-w-[140px]"
                   >
-                    {isSaving ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin text-white" />
-                        <span>Updating...</span>
-                      </>
-                    ) : (
-                      <span>Save & Update Ticket</span>
-                    )}
-                  </button>
+                    <span>Save & Update Ticket</span>
+                  </ActionButton>
                 </div>
 
               </form>

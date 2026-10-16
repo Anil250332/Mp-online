@@ -12,15 +12,28 @@ import {
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import apiClient from '../../api/client';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton } from '../../components/ui/Skeleton';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+
+// MySQL 'YYYY-MM-DD HH:MM:SS' ko Safari-safe parse karke '15 Jan 2024' format; invalid ho to '—'
+const formatJoinDate = (value?: string | null) => {
+  if (!value) return '—';
+  const d = new Date(String(value).replace(' ', 'T'));
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
 
 export default function DistributorProfile() {
-  const { user } = useAuth();
+  const { user, isLoading: isAuthLoading } = useAuth();
+  // Profile data abhi load ho raha hai (app start par session restore)
+  const isProfileLoading = isAuthLoading && !user;
 
   // Dynamic system settings (Helpline & Support Email)
   const [supportInfo, setSupportInfo] = useState({
     helplineNumber: '+91 0755 2700800',
     supportEmail: 'distributor-help@mponline.gov.in'
   });
+  const [isSettingsLoading, setIsSettingsLoading] = useState(true);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -34,23 +47,26 @@ export default function DistributorProfile() {
         }
       } catch (e) {
         console.error('Failed to fetch support settings:', e);
+      } finally {
+        setIsSettingsLoading(false);
       }
     };
     fetchSettings();
   }, []);
 
-  // Profile data from logged in user or fallback
+  // Profile data sirf logged-in user se — fake fallback nahi, data na ho to '—'
+  const rawUser = user as (NonNullable<typeof user> & { created_at?: string; createdAt?: string; aadhaar?: string }) | null;
   const profile = {
     name: user?.full_name || 'Distributor Partner',
-    distributorId: `DIST-MP-${1000 + (user?.id ? Number(user.id) : 101)}`,
-    mobile: user?.mobile || '+91 98260 12345',
-    email: user?.email || 'distributor@mponline.gov.in',
-    district: user?.district || 'Bhopal',
-    tehsil: user?.tehsil || 'Huzur',
-    joiningDate: '15 Jan 2024',
-    status: 'ACTIVE',
-    aadhaar: (user as any)?.aadhaar_number || (user as any)?.aadhaar || 'XXXX-XXXX-8921'
+    distributorId: user?.id ? `DIST-MP-${1000 + Number(user.id)}` : '—',
+    mobile: user?.mobile || '—',
+    email: user?.email || '—',
+    location: [user?.district, user?.tehsil].filter(Boolean).join(', ') || '—',
+    joiningDate: formatJoinDate(rawUser?.created_at || rawUser?.createdAt),
+    status: user?.is_active === false ? 'INACTIVE' : (user?.approval_status || 'active').toUpperCase(),
+    aadhaar: user?.aadhaar_number || rawUser?.aadhaar || '—'
   };
+  const isStatusActive = profile.status === 'ACTIVE' || profile.status === 'APPROVED';
 
   // Password change state
   const [passwords, setPasswords] = useState({
@@ -58,11 +74,11 @@ export default function DistributorProfile() {
     newPass: '',
     confirm: ''
   });
-  const [passLoading, setPassLoading] = useState(false);
+  const passAction = useAsyncAction();
   const [passSuccess, setPassSuccess] = useState(false);
   const [passError, setPassError] = useState('');
 
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
+  const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPassError('');
     setPassSuccess(false);
@@ -82,23 +98,25 @@ export default function DistributorProfile() {
       return;
     }
 
-    setPassLoading(true);
-    try {
-      const response = await apiClient.post('/auth/change-password', {
-        currentPassword: passwords.current,
-        newPassword: passwords.newPass
-      });
+    passAction.run(async () => {
+      try {
+        const response = await apiClient.post('/auth/change-password', {
+          currentPassword: passwords.current,
+          newPassword: passwords.newPass
+        });
 
-      if (response.data.status === 'success') {
+        if (response.data.status !== 'success') {
+          setPassError(response.data.message || 'Password update failed. Kripya Current Password check karein.');
+          return false;
+        }
         setPassSuccess(true);
         setPasswords({ current: '', newPass: '', confirm: '' });
         setTimeout(() => setPassSuccess(false), 4000);
+      } catch (err: any) {
+        setPassError(err.response?.data?.message || 'Password update failed. Kripya Current Password check karein.');
+        throw err;
       }
-    } catch (err: any) {
-      setPassError(err.response?.data?.message || 'Password update failed. Kripya Current Password check karein.');
-    } finally {
-      setPassLoading(false);
-    }
+    });
   };
 
   return (
@@ -107,6 +125,15 @@ export default function DistributorProfile() {
         
         {/* Page Header */}
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          {isProfileLoading ? (
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-12 w-12 rounded-full" />
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-3 w-56" />
+              </div>
+            </div>
+          ) : (
           <div className="flex items-center gap-3">
             <div className="h-12 w-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xl border border-blue-200 shadow-inner uppercase">
               {profile.name.charAt(0)}
@@ -114,7 +141,7 @@ export default function DistributorProfile() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold text-slate-800">{profile.name}</h1>
-                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isStatusActive ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-amber-100 text-amber-800 border-amber-200'}`}>
                   {profile.status}
                 </span>
               </div>
@@ -123,6 +150,7 @@ export default function DistributorProfile() {
               </p>
             </div>
           </div>
+          )}
         </div>
 
         {/* Content Grid */}
@@ -141,6 +169,16 @@ export default function DistributorProfile() {
                 <span className="text-[11px] text-slate-400 font-medium">Read Only</span>
               </div>
 
+              {isProfileLoading ? (
+                <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="p-3 bg-slate-50/70 rounded-lg border border-slate-100 space-y-2">
+                      <Skeleton className="h-3 w-20" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs sm:text-sm">
                 <div className="p-3 bg-slate-50/70 rounded-lg border border-slate-100">
                   <span className="text-slate-400 text-xs font-medium block">Full Name</span>
@@ -178,9 +216,10 @@ export default function DistributorProfile() {
 
                 <div className="p-3 bg-slate-50/70 rounded-lg border border-slate-100">
                   <span className="text-slate-400 text-xs font-medium block">District / Location</span>
-                  <span className="font-semibold text-slate-800">{profile.district}, {profile.tehsil}</span>
+                  <span className="font-semibold text-slate-800">{profile.location}</span>
                 </div>
               </div>
+              )}
             </div>
 
           </div>
@@ -247,20 +286,17 @@ export default function DistributorProfile() {
                   />
                 </div>
 
-                <button
+                <ActionButton
                   type="submit"
-                  disabled={passLoading}
+                  state={passAction.state}
+                  loadingText="Updating..."
+                  successText="Password Updated!"
+                  errorText="Update Failed"
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  {passLoading ? (
-                    <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                  ) : (
-                    <>
-                      <Key className="h-4 w-4" />
-                      <span>Update Password</span>
-                    </>
-                  )}
-                </button>
+                  <Key className="h-4 w-4" />
+                  <span>Update Password</span>
+                </ActionButton>
               </form>
             </div>
 
@@ -273,10 +309,17 @@ export default function DistributorProfile() {
               <p className="text-xs text-slate-300">
                 Need to modify profile details or update bank account? Contact your assigned MP Online District Manager.
               </p>
+              {isSettingsLoading ? (
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <Skeleton className="h-3 w-48" />
+                  <Skeleton className="h-3 w-56" />
+                </div>
+              ) : (
               <div className="pt-2 border-t border-slate-800 text-xs space-y-1.5 text-slate-300">
                 <p>📞 DM Helpline: <span className="text-emerald-400 font-bold">{supportInfo.helplineNumber}</span></p>
                 <p>✉️ Support: <span className="text-blue-300 font-bold">{supportInfo.supportEmail}</span></p>
               </div>
+              )}
             </div>
 
           </div>

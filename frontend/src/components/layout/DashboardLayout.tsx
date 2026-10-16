@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useAppSelector } from '../../store/hooks';
 import {
   Menu,
   Home,
@@ -52,6 +53,10 @@ interface MenuItem {
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  // Live wallet balance (Redux) — recharge / application ke baad turant update hota hai
+  const walletStatus = useAppSelector(s => s.wallet.status);
+  const walletBalance = useAppSelector(s => s.wallet.balance);
+  const headerBalance = walletStatus === 'succeeded' ? walletBalance : Number(user?.wallet_balance || 0);
   
   // Responsive sidebar state: open by default on desktop (>=768px), closed on mobile (<768px)
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
@@ -227,7 +232,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
           {(!user?.role || user?.role === 'agent') && (
             <div className="flex items-center gap-1.5 bg-slate-900/90 border border-white/10 px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-inner">
               <Wallet className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="font-mono text-emerald-400 font-extrabold">₹{(user?.wallet_balance || 0).toFixed(0)}</span>
+              <span className="font-mono text-emerald-400 font-extrabold">₹{headerBalance.toFixed(0)}</span>
             </div>
           )}
 

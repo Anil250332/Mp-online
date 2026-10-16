@@ -484,3 +484,71 @@
 
 4. **Kya koi aur optimize tareeka hai (Optimization & Future Considerations):**
    - Automatic WhatsApp notification trigger integration when Admin approves or rejects an Operator price change request.
+
+---
+
+### 🗓️ 2026-10-16 - Full Codebase Bug Review & Testing (Read-only Audit)
+1. **Kya kiya (What was done):**
+   - Backend ki saari files ka `node --check` syntax check + har module ka import test (all pass). Frontend `tsc -b` + `vite build` (0 errors) + `oxlint` (sirf warnings).
+   - Backend (wallet/applications, auth/users/shops) aur Frontend (agent/operator/auth, admin/manager/distributor) ka line-by-line review. Koi code change nahi kiya.
+2. **Kyu kiya (Why it was done):**
+   - User request: poore code me bugs/broken features identify karne the.
+3. **Is se hua kya (Impact / Result):**
+   - Critical issues mile: free wallet recharge (`/wallet/recharge` bina gateway), agent withdraw allowed, verify/reject/complete status guards missing (double payout/refund), complaint routes bina auth, hardcoded JWT fallback secret, `debug_otp` leak, RegisterPage wrong OTP par bhi success, `localhost:5000` hardcoded file URLs, 2-tier withdrawal missing, shop `WHERE user_id = ? OR id = ?` galat row update, `fee || agent_fee` "0.00" truthy bug, stores errors swallow karke false success.
+   - MySQL local nahi chal raha tha, isliye live API test nahi hua.
+4. **Kya koi aur optimize tareeka hai (Optimization & Alternatives):**
+   - Fix order: pehle money/security (recharge, status guards, complaint auth, JWT secret, OTP leak), phir role guards, phir frontend error handling + env-based file URL.
+
+---
+
+### 🗓️ 2026-10-16 - Phase 1 Bug Fixes: Money Flow Guards, Security & Role Permissions
+1. **Kya kiya (What was done):**
+   - **Applications (`applicationRepository.js`)**: Verify sirf `completed` par; Reject `verified`/`rejected` par blocked; Complete sirf open status (`pending/assigned/processing/correction_required`) par row lock ke saath; Operator sirf apni assigned app complete/reject kar sakta hai. `GET /applications/:id` par ownership check.
+   - **Fee bug**: `"0.00"` truthy hone se fee ₹0 ho jaati thi — `serviceController.js` (display) + `applicationService.js` (charge) dono me `fee > 0 ? fee : agent_fee`.
+   - **Wallet routes**: `/withdraw` sirf operator/distributor, `/deduct` sirf super_admin, `/refund` me userId mandatory + self-refund blocked.
+   - **Complaints**: routes par `authenticateToken`, status PATCH sirf admin/sub_admin/manager, status value validation.
+   - **Shops**: GET/POST/request-delete role guards; `WHERE user_id = ? OR id = ?` → `WHERE user_id = ?` (shopController + userController); target sirf `role='agent'`; duplicate delete request block.
+   - **Users**: Role hierarchy (super_admin > sub_admin > manager > others) — create/update/toggle/approve/reject/delete sirf lower rank par, self-action blocked.
+   - **Auth**: invalid/expired/suspended token → 401 (frontend auto logout); OTP `crypto.randomInt`, 5 galat attempts par session block; reset password sirf OTP wale userId ka.
+   - **Uploads**: dangerous extensions block, `/uploads` par `nosniff` + html/svg attachment; `mime_type` VARCHAR(150) migration; `unhandledRejection` handler.
+   - **Frontend**: `FILE_BASE_URL` (`localhost:5000` hardcode hataya), RegisterPage galat OTP par ab error dikhata hai, shopStore errors ab page par dikhte hain, login ke baad shop sync, dashboard uppercase status counts, AdminTaskVerification buttons status-gated + double-click guard.
+2. **Kyu kiya (Why it was done):**
+   - Review me mile critical bugs: double payout/refund, free/abusable wallet endpoints, unauthenticated complaints, privilege escalation, prod me files na khulna, false success messages.
+3. **Is se hua kya (Impact / Result):**
+   - Backend: saari files `node --check` + import pass. Fake-DB HTTP harness se 51/51 tests pass (guards, payouts, refunds, roles). Frontend `tsc -b` + `vite build` 0 errors.
+4. **Kya koi aur optimize tareeka hai (Optimization & Alternatives):**
+   - Pending (user decision): wallet recharge (Cashfree nahi hai), debug OTP badge + demo logins, JWT_SECRET fallback, distributor verify / manager approve-deletion permissions, 2-tier withdrawal flow.
+
+---
+
+### 🗓️ 2026-10-16 - Phase 2: OTP Leak Removal, Demo Logins Removal, JWT Secret Hardening, Distributor Shop Verify
+1. **Kya kiya (What was done):**
+   - `authController.js`: `debug_otp` response se hataya; registration OTP ke liye valid email mandatory (WhatsApp service disabled hai, OTP sirf email se jaata hai).
+   - `RegisterPage.tsx`: OTP Code badge hataya, Full Name + Email validation, Email field required (`*`).
+   - `LoginPage.tsx`: "Quick Demo Logins" (Super Admin credentials sahit) block hataya.
+   - `utils/jwt.js`: hardcoded fallback secret hataya — `JWT_SECRET` na ho to server clear error ke saath start nahi hoga.
+   - `shopRoutes.js`: Distributor ko `/shops/:id/approve` & `/reject` permission (sirf agent accounts par). ShopVerify success message update.
+   - User decision: Wallet recharge abhi jaisa hai (Cashfree integration baaki), Manager approve-deletion permission nahi di.
+2. **Kyu kiya (Why it was done):**
+   - User ne OTP/demo logins poori tarah hatane, JWT fallback hatane, aur distributor verify enable karne ko kaha.
+3. **Is se hua kya (Impact / Result):**
+   - Fake-DB HTTP harness: 63/63 pass (OTP leak nahi, 5 galat attempts par block, distributor approve OK, non-agent par 404). Frontend `tsc -b` + `vite build` 0 errors.
+   - ⚠️ Deploy requirement: Render par `JWT_SECRET` aur SMTP (`SMTP_USER`, `SMTP_PASS`) set hone chahiye, warna server start / registration OTP email nahi chalega.
+4. **Kya koi aur optimize tareeka hai (Optimization & Alternatives):**
+   - Next: Cashfree webhook-based recharge, 2-tier withdrawal (manager_verified → admin UTR), distributor network linking (`distributor_id`), lists pagination.
+
+---
+
+### 🗓️ 2026-10-16 - Phase 3: Redux Toolkit, Skeleton Loading, 3-Stage Buttons + Remaining Bug Fixes
+1. **Kya kiya (What was done):**
+   - **Redux Toolkit** (`@reduxjs/toolkit`, `react-redux`): `src/store/` — slices `auth`, `wallet`, `complaints`, `shops`, `services` (async thunks + status). `src/store/hooks.ts` typed hooks + selectors. `AuthContext` ab Redux par chalta hai (`useAuth()` API same). Purane `walletStore/complaintStore/shopStore/serviceStore` ab Redux facades hain (same API, deep-clone getters, failure par error throw — fake success / fake 'TKT-OFFLINE' ticket / base64 icon fallback hata diye). Types `src/types/service.ts` me.
+   - **UI kit**: `components/ui/Skeleton.tsx` (Skeleton, SkeletonText, SkeletonStatCards, SkeletonCards, SkeletonGrid, SkeletonTableRows, SkeletonTable), `components/ui/ActionButton.tsx` + `hooks/useAsyncAction.ts` (3-stage: Idle → Loading/disabled → Success ✓ / Error ✗ → Idle; `useKeyedAsyncAction` per-row ke liye).
+   - **Saare pages** (agent, operator, distributor, admin, manager, auth, profile) Redux selectors + first-load skeleton + 3-stage async buttons par migrate; fake fallback data (₹500 balance, fake email/district/Aadhaar/joining date) hataya; Safari date parsing fix; AdminCommissions mock data → real applications data + CSV export.
+   - **2-Tier Withdrawal**: `PATCH /wallet/withdrawals/:id/verify` (manager/sub_admin/super_admin: pending → manager_verified ya reject+refund) + `/process` (super_admin/sub_admin: sirf manager_verified, real UTR mandatory). Shared `components/withdrawals/WithdrawalQueue.tsx` (Admin = release desk, Manager = verification; ManagerWithdrawalRequests ab real API). OperatorWallet: UPI-only mode, "My Withdrawal Requests" status tracking.
+   - **Backend fixes**: price approval area/ward me sirf usi assignment ka price; operator ownership check on price request; boot-time fee overwrite hataya; default super_admin sirf jab koi super_admin na ho; distributor network linking (`users.distributor_id` migration, distributor scope on shops); operator output fields `completion_output_data.outputValues` me save; sub-service `is_active` save par preserve; service fee/commission validation; assignment controller JSON form_schema bug + atomic transaction + operator own-data only; deterministic operator routing (ORDER BY); inactive service par apply block; failed request par uploaded files cleanup; verification-queue `?limit=` (max 1000), agent/operator lists 500.
+2. **Kyu kiya (Why it was done):**
+   - User request: sab bugs properly fix, Redux lagana, dynamic data par skeleton loading, buttons par 3-stage loading.
+3. **Is se hua kya (Impact / Result):**
+   - Frontend `tsc -b` + `vite build` 0 errors (1992 modules), oxlint 0 errors (warnings 18 → 15). Backend sab files syntax + import pass. Fake-DB HTTP harness 79/79 pass (withdrawal 2-tier, price scope, roles, payouts, OTP).
+4. **Kya koi aur optimize tareeka hai (Optimization & Alternatives):**
+   - Pending: Cashfree webhook recharge (user ne abhi rakhne ko kaha), distributor commission split (`distributor_share` business rule decide karna hai), server-side pagination, route-level code splitting (bundle 850KB+), real browser E2E test with MySQL.

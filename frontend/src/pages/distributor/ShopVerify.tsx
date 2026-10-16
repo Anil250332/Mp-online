@@ -1,7 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { shopStore } from '../../services/shopStore';
 import type { Shop } from '../../services/shopStore';
+import { useAppDispatch, useAppSelector, selectShops, selectShopsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchShops } from '../../store/slices/shopsSlice';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonCards } from '../../components/ui/Skeleton';
+import { useKeyedAsyncAction } from '../../hooks/useAsyncAction';
 import {
   UserCheck,
   CheckCircle2,
@@ -14,52 +19,66 @@ import {
   Mail,
   CreditCard,
   AlertTriangle,
-  X,
-  Loader2
+  X
 } from 'lucide-react';
 
 export default function ShopVerify() {
-  const [pendingShops, setPendingShops] = useState<Shop[]>([]);
+  const dispatch = useAppDispatch();
+  const allShops = useAppSelector(selectShops);
+  const shopsStatus = useAppSelector(selectShopsStatus);
+  // Redux state frozen hai — filter naya array deta hai, objects mutate nahi karte
+  const pendingShops = useMemo(() => allShops.filter(s => s.status === 'PENDING'), [allShops]);
+  const isShopsLoading = isInitialLoading(shopsStatus, allShops.length);
   const [selectedRejectShop, setSelectedRejectShop] = useState<Shop | null>(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState('');
+  const [actionErrorMsg, setActionErrorMsg] = useState('');
+  const [rejectErrorMsg, setRejectErrorMsg] = useState('');
+  // Har shop row ke approve / reject ka alag 3-stage state
+  const rowAction = useKeyedAsyncAction();
 
   useEffect(() => {
-    const updateShops = () => {
-      const all = shopStore.getShops();
-      setPendingShops(all.filter(s => s.status === 'PENDING'));
-    };
+    dispatch(fetchShops());
+  }, [dispatch]);
 
-    updateShops();
-    const unsubscribe = shopStore.subscribe(updateShops);
-    return unsubscribe;
-  }, []);
-
-  const [processingId, setProcessingId] = useState<string | number | null>(null);
-
-  const handleApprove = async (shop: Shop) => {
-    if (processingId === shop.id) return;
-    setProcessingId(shop.id);
-    try {
-      await shopStore.approveShop(shop.id);
-      setActionSuccessMsg(`Shop "${shop.shopName}" verified & forwarded to Admin successfully!`);
-      setTimeout(() => setActionSuccessMsg(''), 3000);
-    } finally {
-      setProcessingId(null);
-    }
+  // Distributor apne network ke self-registered (agent) shops ko seedha approve / reject kar sakta hai
+  const handleApprove = (shop: Shop) => {
+    setActionErrorMsg('');
+    rowAction.run(`approve-${shop.id}`, async () => {
+      try {
+        await shopStore.approveShop(shop.id);
+        setActionSuccessMsg(`Shop "${shop.shopName}" verified & activated successfully!`);
+        setTimeout(() => setActionSuccessMsg(''), 3000);
+      } catch (err: any) {
+        setActionErrorMsg(err.message || 'Failed to verify shop.');
+        throw err;
+      }
+    });
   };
 
-  const handleConfirmReject = async () => {
-    if (!selectedRejectShop || processingId === selectedRejectShop.id) return;
-    setProcessingId(selectedRejectShop.id);
-    try {
-      await shopStore.rejectShop(selectedRejectShop.id);
-      setActionSuccessMsg(`Registration request for "${selectedRejectShop.shopName}" rejected.`);
-      setSelectedRejectShop(null);
-      setTimeout(() => setActionSuccessMsg(''), 3000);
-    } finally {
-      setProcessingId(null);
-    }
+  const openRejectModal = (shop: Shop) => {
+    setRejectErrorMsg('');
+    setSelectedRejectShop(shop);
   };
+
+  const handleConfirmReject = () => {
+    if (!selectedRejectShop) return;
+    const shop = selectedRejectShop;
+    setRejectErrorMsg('');
+    rowAction.run(`reject-${shop.id}`, async () => {
+      try {
+        await shopStore.rejectShop(shop.id);
+        setActionSuccessMsg(`Registration request for "${shop.shopName}" rejected.`);
+        setSelectedRejectShop(null);
+        setTimeout(() => setActionSuccessMsg(''), 3000);
+      } catch (err: any) {
+        setRejectErrorMsg(err.message || 'Failed to reject shop.');
+        throw err;
+      }
+    });
+  };
+
+  const isRowBusy = (id: string) =>
+    rowAction.stateOf(`approve-${id}`) === 'loading' || rowAction.stateOf(`reject-${id}`) === 'loading';
 
   return (
     <DashboardLayout>
@@ -73,13 +92,13 @@ export default function ShopVerify() {
               <span>Verify Shop Registrations</span>
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 mt-1">
-              Verify self-registered partner shop applications before forwarding to Admin for approval.
+              Verify self-registered partner shop applications and approve / reject them directly.
             </p>
           </div>
 
           <div className="bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl text-center">
             <span className="text-xs font-semibold text-amber-700 block">Pending Verification</span>
-            <span className="text-lg font-black text-amber-900">{pendingShops.length} Requests</span>
+            <span className="text-lg font-black text-amber-900">{isShopsLoading ? '—' : pendingShops.length} Requests</span>
           </div>
         </div>
 
@@ -91,8 +110,17 @@ export default function ShopVerify() {
           </div>
         )}
 
+        {actionErrorMsg && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 animate-in fade-in">
+            <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+            <span>{actionErrorMsg}</span>
+          </div>
+        )}
+
         {/* Pending Requests List */}
-        {pendingShops.length === 0 ? (
+        {isShopsLoading ? (
+          <SkeletonCards count={3} />
+        ) : pendingShops.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs space-y-3">
             <div className="h-14 w-14 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto">
               <CheckCircle2 className="h-8 w-8" />
@@ -171,23 +199,26 @@ export default function ShopVerify() {
                 <div className="flex items-center justify-end gap-3 pt-1">
                   <button
                     type="button"
-                    onClick={() => setSelectedRejectShop(shop)}
-                    disabled={processingId === shop.id}
+                    onClick={() => openRejectModal(shop)}
+                    disabled={isRowBusy(shop.id)}
                     className="px-4 py-2 border border-slate-200 text-slate-600 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 font-semibold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
                     <XCircle className="h-4 w-4 text-red-500" />
                     <span>Reject</span>
                   </button>
 
-                  <button
-                    type="button"
+                  <ActionButton
+                    state={rowAction.stateOf(`approve-${shop.id}`)}
                     onClick={() => handleApprove(shop)}
-                    disabled={processingId === shop.id}
+                    disabled={rowAction.stateOf(`reject-${shop.id}`) === 'loading'}
+                    loadingText="Verifying..."
+                    successText="Approved!"
+                    errorText="Failed"
                     className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
-                    {processingId === shop.id ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <CheckCircle2 className="h-4 w-4" />}
-                    <span>{processingId === shop.id ? 'Verifying...' : 'Verify & Forward to Admin'}</span>
-                  </button>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Verify & Approve Shop</span>
+                  </ActionButton>
                 </div>
 
               </div>
@@ -217,6 +248,13 @@ export default function ShopVerify() {
                 Are you sure you want to reject the self-registration request for <strong>"{selectedRejectShop.shopName}"</strong>?
               </p>
 
+              {rejectErrorMsg && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                  <span>{rejectErrorMsg}</span>
+                </div>
+              )}
+
               <div className="pt-2 flex justify-end gap-3">
                 <button
                   type="button"
@@ -225,13 +263,16 @@ export default function ShopVerify() {
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
+                <ActionButton
+                  state={rowAction.stateOf(`reject-${selectedRejectShop.id}`)}
                   onClick={handleConfirmReject}
+                  loadingText="Rejecting..."
+                  successText="Rejected"
+                  errorText="Failed"
                   className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors"
                 >
                   Confirm Reject
-                </button>
+                </ActionButton>
               </div>
 
             </div>

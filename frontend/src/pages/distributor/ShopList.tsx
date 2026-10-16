@@ -1,7 +1,13 @@
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../context/AuthContext';
 import { shopStore } from '../../services/shopStore';
 import type { Shop } from '../../services/shopStore';
+import { useAppDispatch, useAppSelector, selectShops, selectShopsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchShops } from '../../store/slices/shopsSlice';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonTableRows } from '../../components/ui/Skeleton';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import {
   Store,
   Search,
@@ -20,7 +26,13 @@ import {
 } from 'lucide-react';
 
 export default function ShopList() {
-  const [shops, setShops] = useState<Shop[]>([]);
+  const { user } = useAuth();
+  const dispatch = useAppDispatch();
+  // Redux state frozen hai — sirf read / filter
+  const shops = useAppSelector(selectShops);
+  const shopsStatus = useAppSelector(selectShopsStatus);
+  const isShopsLoading = isInitialLoading(shopsStatus, shops.length);
+  const addAction = useAsyncAction();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
@@ -40,14 +52,10 @@ export default function ShopList() {
   const [successMsg, setSuccessMsg] = useState('');
 
   useEffect(() => {
-    setShops(shopStore.getShops());
-    const unsubscribe = shopStore.subscribe(() => {
-      setShops(shopStore.getShops());
-    });
-    return unsubscribe;
-  }, []);
+    dispatch(fetchShops());
+  }, [dispatch]);
 
-  const handleAddShopSubmit = async (e: React.FormEvent) => {
+  const handleAddShopSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
     setSuccessMsg('');
@@ -67,35 +75,40 @@ export default function ShopList() {
       return;
     }
 
-    const created = await shopStore.addActiveShopByDistributor(formData);
-    if (!created) {
-      setFormError('Failed to create shop on server. Please check details and try again.');
-      return;
-    }
+    addAction.run(async () => {
+      let created: Shop;
+      try {
+        created = await shopStore.addActiveShopByDistributor(formData);
+      } catch (err: any) {
+        setFormError(err.message || 'Failed to create shop on server. Please check details and try again.');
+        throw err;
+      }
 
-    setSuccessMsg(`Shop "${created.shopName}" added successfully! The owner can now log in at /login using Mobile: ${created.mobile}`);
-    setFormData({
-      ownerName: '',
-      shopName: '',
-      mobile: '',
-      email: '',
-      aadhaar: '',
-      address: '',
-      password: ''
+      setSuccessMsg(`Shop "${created.shopName}" added successfully! The owner can now log in at /login using Mobile: ${created.mobile}`);
+      setFormData({
+        ownerName: '',
+        shopName: '',
+        mobile: '',
+        email: '',
+        aadhaar: '',
+        address: '',
+        password: ''
+      });
+
+      setTimeout(() => {
+        setIsAddModalOpen(false);
+        setSuccessMsg('');
+      }, 2500);
     });
-
-    setTimeout(() => {
-      setIsAddModalOpen(false);
-      setSuccessMsg('');
-    }, 2500);
   };
 
+  const term = searchTerm.toLowerCase();
   const filteredShops = shops.filter(shop => {
     const matchesSearch =
-      shop.shopName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      shop.ownerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      shop.shopCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      shop.mobile.includes(searchTerm);
+      (shop.shopName || '').toLowerCase().includes(term) ||
+      (shop.ownerName || '').toLowerCase().includes(term) ||
+      (shop.shopCode || '').toLowerCase().includes(term) ||
+      (shop.mobile || '').includes(searchTerm);
 
     if (statusFilter === 'ALL') return matchesSearch;
     return matchesSearch && shop.status === statusFilter;
@@ -118,7 +131,10 @@ export default function ShopList() {
           </div>
 
           <button
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={() => {
+              setFormError('');
+              setIsAddModalOpen(true);
+            }}
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2"
           >
             <UserPlus className="h-4 w-4" />
@@ -175,7 +191,9 @@ export default function ShopList() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredShops.length === 0 ? (
+                {isShopsLoading ? (
+                  <SkeletonTableRows rows={5} cols={7} />
+                ) : filteredShops.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
                       No shops found matching your search filters.
@@ -245,7 +263,7 @@ export default function ShopList() {
 
           <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 flex items-center justify-between">
             <span>Total Registered Shops: <strong className="text-slate-800">{filteredShops.length}</strong></span>
-            <span>Distributor Territory: Bhopal & Surrounding Blocks</span>
+            <span>Distributor Territory: {[user?.district, user?.tehsil].filter(Boolean).join(', ') || '—'}</span>
           </div>
         </div>
 
@@ -421,12 +439,16 @@ export default function ShopList() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
+                    state={addAction.state}
+                    loadingText="Saving..."
+                    successText="Shop Added!"
+                    errorText="Failed"
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors"
                   >
                     Save & Activate Shop
-                  </button>
+                  </ActionButton>
                 </div>
 
               </form>

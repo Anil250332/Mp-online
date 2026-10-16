@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import apiClient from '../../api/client';
-import { walletStore } from '../../services/walletStore';
+import { useAppDispatch, useAppSelector, selectWalletBalance, selectWalletStatus, selectWalletTransactions, isInitialLoading } from '../../store/hooks';
+import { fetchWallet } from '../../store/slices/walletSlice';
+import { Skeleton, SkeletonCards } from '../../components/ui/Skeleton';
 import {
   Inbox,
   CheckCircle2,
@@ -16,32 +18,41 @@ import {
 export const OperatorDashboard: React.FC = () => {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [walletBalance, setWalletBalance] = useState<number>(0);
+  // Pehli load par skeleton; refresh par sirf icon spin
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const dispatch = useAppDispatch();
+  const walletBalance = useAppSelector(selectWalletBalance);
+  const walletStatus = useAppSelector(selectWalletStatus);
+  const walletTxnCount = useAppSelector(selectWalletTransactions).length;
+  const isWalletInitialLoading = isInitialLoading(walletStatus, walletTxnCount);
 
   const fetchQueue = useCallback(async () => {
-    setIsLoading(true);
+    dispatch(fetchWallet());
     try {
       const res = await apiClient.get('/applications/operator-queue');
-      if (res.data.status === 'success') {
+      if (res.data.status === 'success' && Array.isArray(res.data.data)) {
         setTasks(res.data.data);
       }
-      await walletStore.syncBackend();
-      setWalletBalance(walletStore.getBalance());
     } catch (e) {
       console.error('Failed to load operator queue', e);
     } finally {
       setIsLoading(false);
+      setHasLoadedOnce(true);
     }
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     fetchQueue();
-    const unsubscribe = walletStore.subscribe(() => {
-      setWalletBalance(walletStore.getBalance());
-    });
-    return unsubscribe;
   }, [fetchQueue]);
+
+  // Manual refresh: spinner on, phir queue reload
+  const refreshQueue = () => {
+    setIsLoading(true);
+    fetchQueue();
+  };
+
+  const isQueueInitialLoading = isLoading && !hasLoadedOnce;
 
   const pendingTasks = tasks.filter(t => ['pending', 'assigned', 'processing'].includes(t.status?.toLowerCase()));
   const completedTasks = tasks.filter(t => ['completed', 'verified'].includes(t.status?.toLowerCase()));
@@ -74,7 +85,7 @@ export const OperatorDashboard: React.FC = () => {
 
           <div className="flex items-center gap-2.5 flex-wrap">
             <button
-              onClick={fetchQueue}
+              onClick={refreshQueue}
               disabled={isLoading}
               className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs flex items-center gap-2 border border-slate-200 transition-colors cursor-pointer"
               title="Refresh Queue"
@@ -102,7 +113,7 @@ export const OperatorDashboard: React.FC = () => {
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">In-Processing Queue</span>
-              <div className="text-2xl font-black text-sky-600 mt-1">{pendingTasks.length}</div>
+              <div className="text-2xl font-black text-sky-600 mt-1">{isQueueInitialLoading ? <Skeleton className="h-7 w-12" /> : pendingTasks.length}</div>
               <p className="text-[11px] text-sky-700 font-semibold mt-1">
                 Active Pending Tasks
               </p>
@@ -119,7 +130,7 @@ export const OperatorDashboard: React.FC = () => {
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Completed Tasks</span>
-              <div className="text-2xl font-black text-emerald-600 mt-1">{completedTasks.length}</div>
+              <div className="text-2xl font-black text-emerald-600 mt-1">{isQueueInitialLoading ? <Skeleton className="h-7 w-12" /> : completedTasks.length}</div>
               <p className="text-[11px] text-emerald-700 font-semibold mt-1">
                 Finished & Delivered
               </p>
@@ -136,7 +147,7 @@ export const OperatorDashboard: React.FC = () => {
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Rejected Requests</span>
-              <div className="text-2xl font-black text-amber-600 mt-1">{rejectedTasks.length}</div>
+              <div className="text-2xl font-black text-amber-600 mt-1">{isQueueInitialLoading ? <Skeleton className="h-7 w-12" /> : rejectedTasks.length}</div>
               <p className="text-[11px] text-amber-700 font-semibold mt-1">
                 Returned to Agent
               </p>
@@ -154,7 +165,11 @@ export const OperatorDashboard: React.FC = () => {
             <div>
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Wallet Balance</span>
               <div className="text-2xl font-black text-teal-600 mt-1">
-                ₹ {walletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {isWalletInitialLoading ? (
+                  <Skeleton className="h-7 w-28" />
+                ) : (
+                  <>₹ {walletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
+                )}
               </div>
               <p className="text-[11px] text-teal-700 font-semibold mt-1">
                 Available Operator Balance
@@ -187,7 +202,9 @@ export const OperatorDashboard: React.FC = () => {
           </div>
 
           <div className="p-4 sm:p-6 space-y-3">
-            {pendingTasks.length === 0 ? (
+            {isQueueInitialLoading ? (
+              <SkeletonCards count={3} />
+            ) : pendingTasks.length === 0 ? (
               <div className="py-10 text-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
                 <Inbox className="h-10 w-10 mx-auto mb-2.5 text-slate-300" />
                 <p className="text-xs font-semibold text-slate-600">No pending applications in your queue right now.</p>
@@ -207,7 +224,7 @@ export const OperatorDashboard: React.FC = () => {
                   <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
                     <div className="text-left sm:text-right">
                       <span className="text-xs text-emerald-600 font-mono font-bold block">+ ₹{Number(task.operatorPayout || 0).toFixed(2)}</span>
-                      <span className="text-[10px] text-slate-400 block">{new Date(task.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span className="text-[10px] text-slate-400 block">{new Date(String(task.createdAt || '').replace(' ', 'T')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                     <Link
                       to="/operator/service-requests"

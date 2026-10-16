@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
-import { shopStore } from '../../services/shopStore';
-import type { Shop } from '../../services/shopStore';
+import { useAppDispatch, useAppSelector, selectShops, selectShopsStatus, isInitialLoading } from '../../store/hooks';
+import { fetchShops } from '../../store/slices/shopsSlice';
+import { Skeleton, SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   Store,
   UserCheck,
@@ -17,29 +18,31 @@ import {
 
 export default function DistributorDashboard() {
   const { user } = useAuth();
-  const [shops, setShops] = useState<Shop[]>([]);
+  const dispatch = useAppDispatch();
+  // Redux state frozen hai — sirf read / filter, mutate nahi
+  const shops = useAppSelector(selectShops);
+  const shopsStatus = useAppSelector(selectShopsStatus);
+  const isShopsLoading = isInitialLoading(shopsStatus, shops.length);
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    const updateShops = () => {
-      setShops(shopStore.getShops());
-    };
-
-    updateShops();
-    const unsubscribe = shopStore.subscribe(updateShops);
-    return unsubscribe;
-  }, []);
+    dispatch(fetchShops());
+  }, [dispatch]);
 
   const activeShops = shops.filter(s => s.status === 'ACTIVE');
   const pendingShops = shops.filter(s => s.status === 'PENDING');
   const deleteRequestedShops = shops.filter(s => s.status === 'DELETE_REQUESTED');
 
+  const term = searchTerm.toLowerCase();
   const filteredShops = shops.filter(shop =>
-    shop.shopName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    shop.ownerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    shop.mobile.includes(searchTerm) ||
-    shop.shopCode.toLowerCase().includes(searchTerm.toLowerCase())
+    (shop.shopName || '').toLowerCase().includes(term) ||
+    (shop.ownerName || '').toLowerCase().includes(term) ||
+    (shop.mobile || '').includes(searchTerm) ||
+    (shop.shopCode || '').toLowerCase().includes(term)
   );
+
+  // KPI number ya pehli load par skeleton
+  const kpi = (value: number) => (isShopsLoading ? <Skeleton className="h-7 w-12" /> : value);
 
   return (
     <DashboardLayout>
@@ -77,7 +80,7 @@ export default function DistributorDashboard() {
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Total Network Shops</span>
-              <div className="text-2xl font-bold text-slate-900 mt-1">{shops.length}</div>
+              <div className="text-2xl font-bold text-slate-900 mt-1">{kpi(shops.length)}</div>
               <p className="text-[11px] text-emerald-600 font-semibold mt-1">↑ Active directory</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold border border-blue-100">
@@ -89,7 +92,7 @@ export default function DistributorDashboard() {
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Pending Verifications</span>
-              <div className="text-2xl font-bold text-amber-600 mt-1">{pendingShops.length}</div>
+              <div className="text-2xl font-bold text-amber-600 mt-1">{kpi(pendingShops.length)}</div>
               <p className="text-[11px] text-amber-700 font-medium mt-1">Verification needed</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold border border-amber-100">
@@ -101,7 +104,7 @@ export default function DistributorDashboard() {
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Active Operational Shops</span>
-              <div className="text-2xl font-bold text-emerald-600 mt-1">{activeShops.length}</div>
+              <div className="text-2xl font-bold text-emerald-600 mt-1">{kpi(activeShops.length)}</div>
               <p className="text-[11px] text-slate-500 font-medium mt-1">Operational</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold border border-emerald-100">
@@ -113,7 +116,7 @@ export default function DistributorDashboard() {
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Deletion Requests</span>
-              <div className="text-2xl font-bold text-red-600 mt-1">{deleteRequestedShops.length}</div>
+              <div className="text-2xl font-bold text-red-600 mt-1">{kpi(deleteRequestedShops.length)}</div>
               <p className="text-[11px] text-red-600 font-medium mt-1">Sent to Admin</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center font-bold border border-red-100">
@@ -215,7 +218,13 @@ export default function DistributorDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredShops.map((shop) => (
+                {isShopsLoading ? (
+                  <SkeletonTableRows rows={5} cols={6} />
+                ) : filteredShops.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 px-4 text-center text-xs text-slate-400">No shops found.</td>
+                  </tr>
+                ) : filteredShops.map((shop) => (
                   <tr key={shop.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-800">{shop.shopName}</div>

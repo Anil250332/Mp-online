@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo } from 'react';
+import { Provider } from 'react-redux';
 import type { User } from '../types/auth';
-import apiClient from '../api/client';
-import { walletStore } from '../services/walletStore';
-import { complaintStore } from '../services/complaintStore';
+import { store } from '../store';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { fetchProfile, loginUser, logoutUser } from '../store/slices/authSlice';
+import { fetchWallet } from '../store/slices/walletSlice';
+import { fetchComplaints } from '../store/slices/complaintsSlice';
+import { fetchShops } from '../store/slices/shopsSlice';
+import { fetchServices } from '../store/slices/servicesSlice';
+
+// In roles ke paas Shop management pages hain (GET /shops access)
+const SHOP_ROLES = ['super_admin', 'sub_admin', 'manager', 'distributor'];
 
 interface AuthContextType {
   user: User | null;
@@ -16,101 +24,73 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => {
-    const savedUser = localStorage.getItem('v2online_user');
-    return savedUser ? JSON.parse(savedUser) : null;
-  });
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('v2online_token'));
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+/**
+ * Auth state Redux (`auth` slice) me rehta hai; ye provider sirf purana `useAuth()` API deta hai
+ * aur login / app start par user ke role ke hisaab se data stores sync karta hai.
+ */
+const AuthBridge: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const dispatch = useAppDispatch();
+  const user = useAppSelector(s => s.auth.user);
+  const token = useAppSelector(s => s.auth.token);
+  const isInitializing = useAppSelector(s => s.auth.isInitializing);
 
-  const refreshProfile = async () => {
-    if (!localStorage.getItem('v2online_token')) {
-      setIsLoading(false);
-      return;
-    }
-    try {
-      const response = await apiClient.get('/auth/me');
-      if (response.data.status === 'success') {
-        setUser(response.data.user);
-        localStorage.setItem('v2online_user', JSON.stringify(response.data.user));
-        // Sync stores with authenticated user
-        if (response.data.user?.id) {
-          walletStore.setUser(response.data.user.id);
-          complaintStore.setUser(response.data.user.id);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to refresh user profile', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const syncUserData = useCallback(
+    (role?: string) => {
+      dispatch(fetchWallet());
+      dispatch(fetchComplaints());
+      dispatch(fetchServices());
+      if (role && SHOP_ROLES.includes(role)) dispatch(fetchShops());
+    },
+    [dispatch]
+  );
+
+  const refreshProfile = useCallback(async () => {
+    const result = await dispatch(fetchProfile());
+    if (fetchProfile.fulfilled.match(result)) syncUserData(result.payload.role);
+  }, [dispatch, syncUserData]);
 
   useEffect(() => {
     refreshProfile();
-  }, []);
+  }, [refreshProfile]);
 
-  const login = async (mobile: string, password: string) => {
-    // All authentication goes through the real backend API
-    try {
-      const response = await apiClient.post('/auth/login', { mobile, password });
-      if (response.data.status === 'success') {
-        const { token: receivedToken, user: receivedUser, redirect_url } = response.data;
-        setToken(receivedToken);
-        setUser(receivedUser);
-        localStorage.setItem('v2online_token', receivedToken);
-        localStorage.setItem('v2online_user', JSON.stringify(receivedUser));
-
-        // Initialize stores with the authenticated user's data
-        if (receivedUser?.id) {
-          walletStore.setUser(receivedUser.id);
-          complaintStore.setUser(receivedUser.id);
-        }
-
-        return { success: true, message: response.data.message, redirectUrl: redirect_url };
+  const login = useCallback(
+    async (mobile: string, password: string) => {
+      const result = await dispatch(loginUser({ mobile, password }));
+      if (loginUser.fulfilled.match(result)) {
+        syncUserData(result.payload.user?.role);
+        return { success: true, message: result.payload.message, redirectUrl: result.payload.redirectUrl };
       }
-      return { success: false, message: response.data.message || 'Login failed' };
-    } catch (error: any) {
-      const msg = error.response?.data?.message || 'Login request failed. Check server connection.';
-      return { success: false, message: msg };
-    }
-  };
-
-  const logout = async () => {
-    try {
-      await apiClient.post('/auth/logout');
-    } catch (error) {
-      console.error('Logout error', error);
-    } finally {
-      // Clear stores
-      walletStore.clearUser();
-      complaintStore.clearUser();
-
-      setUser(null);
-      setToken(null);
-      localStorage.removeItem('v2online_token');
-      localStorage.removeItem('v2online_user');
-      window.location.href = '/login';
-    }
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        isAuthenticated: !!token && !!user,
-        isLoading,
-        login,
-        logout,
-        refreshProfile
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+      return { success: false, message: result.payload || 'Login failed' };
+    },
+    [dispatch, syncUserData]
   );
+
+  const logout = useCallback(async () => {
+    await dispatch(logoutUser());
+    window.location.href = '/login';
+  }, [dispatch]);
+
+  const value = useMemo<AuthContextType>(
+    () => ({
+      user,
+      token,
+      isAuthenticated: !!token && !!user,
+      isLoading: isInitializing,
+      login,
+      logout,
+      refreshProfile
+    }),
+    [user, token, isInitializing, login, logout, refreshProfile]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Provider store={store}>
+    <AuthBridge>{children}</AuthBridge>
+  </Provider>
+);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

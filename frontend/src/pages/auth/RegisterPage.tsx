@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import apiClient from '../../api/client';
-import { shopStore } from '../../services/shopStore';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
 import {
   Store,
   Briefcase,
@@ -22,7 +23,10 @@ import {
 export const RegisterPage: React.FC = () => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [role, setRole] = useState<'agent' | 'operator'>('agent');
-  const [isLoading, setIsLoading] = useState(false);
+  // 3-stage button states (Send OTP / Resend OTP / Verify & Register)
+  const sendOtpAction = useAsyncAction();
+  const resendOtpAction = useAsyncAction();
+  const verifyAction = useAsyncAction();
   const [errorMessage, setErrorMessage] = useState('');
 
   // Form State
@@ -41,15 +45,25 @@ export const RegisterPage: React.FC = () => {
   const [otp, setOtp] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [receivedOtp, setReceivedOtp] = useState('');
 
   // Step 1: Request OTP
-  const handleRequestOtp = async (e: React.FormEvent) => {
+  const handleRequestOtp = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
+    if (!fullName.trim()) {
+      setErrorMessage('Kripya apna poora naam enter karein.');
+      return;
+    }
+
     if (mobile.length !== 10) {
       setErrorMessage('Kripya 10-digit valid mobile number enter karein.');
+      return;
+    }
+
+    // OTP sirf email par jaata hai, isliye valid email zaroori hai
+    if (!/^[^@ ]+@[^@ ]+[.][^@ ]+$/.test(email.trim())) {
+      setErrorMessage('Kripya valid Email Address enter karein. OTP isi email par bheja jayega.');
       return;
     }
 
@@ -63,69 +77,61 @@ export const RegisterPage: React.FC = () => {
       return;
     }
 
-    setIsLoading(true);
-    try {
-      const response = await apiClient.post('/auth/register-otp', {
-        role,
-        full_name: fullName,
-        mobile,
-        shop_name: shopName,
-        office_name: officeName,
-        designation,
-        ward_no: wardNumber,
-        area,
-        email,
-        aadhaar_number: aadhaarNumber,
-        address
-      });
-
-      if (response.data.status === 'success') {
-        setReceivedOtp(response.data.debug_otp || response.data.otp || '123456');
-        setStep(2);
+    sendOtpAction.run(async () => {
+      try {
+        const response = await apiClient.post('/auth/register-otp', buildOtpPayload());
+        if (response.data.status === 'success') {
+          setStep(2);
+          return true;
+        }
+        setErrorMessage(response.data.message || 'OTP request failed. Kripya dobara try karein.');
+        return false;
+      } catch (error: any) {
+        setErrorMessage(error.response?.data?.message || error.message || 'OTP request failed. Kripya dobara try karein.');
+        return false;
       }
-    } catch (error: any) {
-      setErrorMessage(error.response?.data?.message || 'OTP request failed. Kripya dobara try karein.');
-    } finally {
-      setIsLoading(false);
-    }
+    });
   };
 
+  // Send + Resend dono ka same payload
+  const buildOtpPayload = () => ({
+    role,
+    full_name: fullName,
+    mobile,
+    shop_name: shopName,
+    office_name: officeName,
+    designation,
+    ward_no: wardNumber,
+    area,
+    email,
+    aadhaar_number: aadhaarNumber,
+    address
+  });
+
   const [resendMessage, setResendMessage] = useState('');
-  const [isResending, setIsResending] = useState(false);
 
   // Resend OTP Handler
-  const handleResendOtp = async () => {
+  const handleResendOtp = () => {
     setErrorMessage('');
     setResendMessage('');
-    setIsResending(true);
-    try {
-      const response = await apiClient.post('/auth/register-otp', {
-        role,
-        full_name: fullName,
-        mobile,
-        shop_name: shopName,
-        office_name: officeName,
-        designation,
-        ward_no: wardNumber,
-        area,
-        email,
-        aadhaar_number: aadhaarNumber,
-        address
-      });
-
-      if (response.data.status === 'success') {
-        setReceivedOtp(response.data.debug_otp || response.data.otp || '123456');
-        setResendMessage('Naya OTP email par successfully bhej diya gaya hai!');
+    resendOtpAction.run(async () => {
+      try {
+        const response = await apiClient.post('/auth/register-otp', buildOtpPayload());
+        if (response.data.status === 'success') {
+          setResendMessage('Naya OTP email par successfully bhej diya gaya hai!');
+          return true;
+        }
+        setErrorMessage(response.data.message || 'OTP resend failed. Kripya dobara try karein.');
+        return false;
+      } catch (error: any) {
+        setErrorMessage(error.response?.data?.message || error.message || 'OTP resend failed. Kripya dobara try karein.');
+        return false;
       }
-    } catch (error: any) {
-      setErrorMessage(error.response?.data?.message || 'OTP resend failed. Kripya dobara try karein.');
-    } finally {
-      setIsResending(false);
-    }
+    });
   };
 
   // Step 2: Verify OTP & Complete Self-Registration
-  const handleVerifyOtp = async (e: React.FormEvent) => {
+  const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -144,34 +150,25 @@ export const RegisterPage: React.FC = () => {
       return;
     }
 
-    setIsLoading(true);
-    try {
-      // Add shop to dynamic shopStore
-      shopStore.addSelfRegisteredShop({
-        ownerName: fullName,
-        shopName: shopName || `${fullName} MP Kiosk`,
-        mobile,
-        email,
-        aadhaar: aadhaarNumber,
-        address
-      });
-
+    verifyAction.run(async () => {
       try {
-        await apiClient.post('/auth/verify-registration', {
+        // Backend OTP verify karke user + shop record (pending approval) create karta hai
+        const response = await apiClient.post('/auth/verify-registration', {
           mobile,
           otp,
           password
         });
-      } catch {
-        // Backend dev fallback
+        if (response.data?.status && response.data.status !== 'success') {
+          setErrorMessage(response.data.message || 'Verification failed. Kripya sahi OTP daalein.');
+          return false;
+        }
+        setStep(3);
+        return true;
+      } catch (error: any) {
+        setErrorMessage(error.response?.data?.message || error.message || 'Verification failed. Kripya sahi OTP daalein.');
+        return false;
       }
-
-      setStep(3);
-    } catch (error: any) {
-      setErrorMessage(error.response?.data?.message || 'Verification failed. Kripya sahi OTP daalein.');
-    } finally {
-      setIsLoading(false);
-    }
+    });
   };
 
   return (
@@ -362,7 +359,7 @@ export const RegisterPage: React.FC = () => {
                     {/* Email Address */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Email Address
+                        Email Address *
                       </label>
                       <input
                         type="email"
@@ -370,6 +367,7 @@ export const RegisterPage: React.FC = () => {
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+                        required
                       />
                     </div>
 
@@ -428,20 +426,17 @@ export const RegisterPage: React.FC = () => {
                   </div>
 
                   <div className="pt-2">
-                    <button
+                    <ActionButton
                       type="submit"
-                      disabled={isLoading}
+                      state={sendOtpAction.state}
+                      loadingText="Sending OTP..."
+                      successText="OTP Sent!"
+                      errorText="Failed"
                       className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-md text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 transition-all"
                     >
-                      {isLoading ? (
-                        <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                      ) : (
-                        <>
-                          <span>Send Email OTP</span>
-                          <ArrowRight className="h-4 w-4" />
-                        </>
-                      )}
-                    </button>
+                      <span>Send Email OTP</span>
+                      <ArrowRight className="h-4 w-4" />
+                    </ActionButton>
                   </div>
                 </form>
               </div>
@@ -462,15 +457,9 @@ export const RegisterPage: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="text-xs text-slate-600 mb-4 flex items-center justify-between gap-2 bg-gradient-to-r from-blue-50 via-indigo-50 to-amber-50 p-3 rounded-xl border border-blue-200/60 shadow-xs">
-                  <div>
-                    {email ? <span>OTP sent to Email <strong className="text-blue-700">{email}</strong> </span> : <span>OTP sent to Mobile <strong className="text-emerald-700">+91-{mobile}</strong>.</span>}
-                    <span className="block text-[11px] text-slate-500 mt-0.5">⏱️ OTP is valid for 5 minutes.</span>
-                  </div>
-                  <div className="bg-amber-100 border border-amber-300 text-amber-900 px-3 py-1.5 rounded-xl font-mono font-extrabold text-xs shrink-0 shadow-xs flex flex-col items-center">
-                    <span className="text-[9px] uppercase tracking-wider text-amber-800 font-sans font-bold">OTP Code</span>
-                    <span className="text-sm text-amber-950 tracking-widest">{receivedOtp || '123456'}</span>
-                  </div>
+                <div className="text-xs text-slate-600 mb-4 bg-gradient-to-r from-blue-50 via-indigo-50 to-amber-50 p-3 rounded-xl border border-blue-200/60 shadow-xs">
+                  <span>OTP sent to Email <strong className="text-blue-700">{email}</strong></span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">⏱️ OTP is valid for 5 minutes. Inbox / Spam folder bhi check karein.</span>
                 </div>
 
                 {resendMessage && (
@@ -498,21 +487,19 @@ export const RegisterPage: React.FC = () => {
                       />
                     </div>
                     <div className="mt-1.5 flex justify-end">
-                      <button
-                        type="button"
+                      <ActionButton
+                        state={resendOtpAction.state}
                         onClick={handleResendOtp}
-                        disabled={isResending}
+                        disabled={verifyAction.isLoading}
+                        loadingText="Resending OTP..."
+                        successText="OTP Sent!"
+                        errorText="Resend Failed"
+                        keepColorOnResult
                         className="text-xs font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-50 flex items-center gap-1"
                       >
-                        {isResending ? (
-                          <span>Resending OTP...</span>
-                        ) : (
-                          <>
-                            <RotateCcw className="h-3 w-3" />
-                            <span>Resend Email OTP</span>
-                          </>
-                        )}
-                      </button>
+                        <RotateCcw className="h-3 w-3" />
+                        <span>Resend Email OTP</span>
+                      </ActionButton>
                     </div>
                   </div>
 
@@ -551,20 +538,18 @@ export const RegisterPage: React.FC = () => {
                   </div>
 
                   <div className="pt-2">
-                    <button
+                    <ActionButton
                       type="submit"
-                      disabled={isLoading}
+                      state={verifyAction.state}
+                      disabled={resendOtpAction.isLoading}
+                      loadingText="Verifying..."
+                      successText="Registered!"
+                      errorText="Verification Failed"
                       className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-md text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50 transition-all"
                     >
-                      {isLoading ? (
-                        <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                      ) : (
-                        <>
-                          <span>Complete Registration</span>
-                          <CheckCircle2 className="h-4 w-4" />
-                        </>
-                      )}
-                    </button>
+                      <span>Complete Registration</span>
+                      <CheckCircle2 className="h-4 w-4" />
+                    </ActionButton>
                   </div>
                 </form>
               </div>

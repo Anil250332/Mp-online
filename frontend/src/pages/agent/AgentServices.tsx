@@ -1,15 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import {
-  serviceStore,
   type ServiceItem,
   type SubServiceItem,
   type FormField,
   DROPDOWN_PRESETS
-} from '../../services/serviceStore';
-import { walletStore } from '../../services/walletStore';
-import apiClient from '../../api/client';
+} from '../../types/service';
+import { useAppDispatch, useAppSelector, selectServices, selectServicesStatus, selectWalletBalance, selectWalletStatus, isInitialLoading } from '../../store/hooks';
+import { fetchServices } from '../../store/slices/servicesSlice';
+import { fetchWallet } from '../../store/slices/walletSlice';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton, SkeletonGrid } from '../../components/ui/Skeleton';
+import apiClient, { FILE_BASE_URL } from '../../api/client';
 import {
   Layers,
   Search,
@@ -28,16 +32,22 @@ import {
   IndianRupee,
   PlusCircle,
   MapPin,
-  FileText,
-  Loader2
+  FileText
 } from 'lucide-react';
 
 export default function AgentServices() {
   const navigate = useNavigate();
-  const [isLoading, setIsLoading] = useState(true);
-  const [services, setServices] = useState<ServiceItem[]>([]);
+  const dispatch = useAppDispatch();
+
+  // Redux se services + wallet (koi fake ₹500 default nahi)
+  const allServices = useAppSelector(selectServices);
+  const servicesStatus = useAppSelector(selectServicesStatus);
+  const walletBalance = useAppSelector(selectWalletBalance);
+  const walletStatus = useAppSelector(selectWalletStatus);
+  const services = useMemo(() => allServices.filter(s => s.isActive), [allServices]);
+  const isLoading = isInitialLoading(servicesStatus, allServices.length);
+  const walletLoading = walletStatus === 'idle' || (walletStatus === 'loading' && walletBalance === 0);
   const [searchTerm, setSearchTerm] = useState('');
-  const [walletBalance, setWalletBalance] = useState<number>(500);
 
   // Sub-service drill-down state
   const [drillDownService, setDrillDownService] = useState<ServiceItem | null>(null);
@@ -60,7 +70,10 @@ export default function AgentServices() {
 
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
+  const applyAction = useAsyncAction();
+  // Area / Ward dropdown load ho raha hai (modal khulte hi fetch hota hai)
+  const [areasLoading, setAreasLoading] = useState(false);
+  const areasRequestId = useRef(0);
 
   interface AreaDetail {
     label: string;
@@ -94,41 +107,9 @@ export default function AgentServices() {
   const [selectedWardNo, setSelectedWardNo] = useState('');
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadData = async () => {
-      setIsLoading(true);
-      try {
-        await serviceStore.syncBackend();
-        await walletStore.syncBackend();
-        if (isMounted) {
-          setServices(serviceStore.getActiveServices());
-          setWalletBalance(walletStore.getBalance());
-        }
-      } catch (err) {
-        console.error('Failed to load services:', err);
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    loadData();
-
-    const update = () => {
-      setServices(serviceStore.getActiveServices());
-      setWalletBalance(walletStore.getBalance());
-    };
-
-    const unsub1 = serviceStore.subscribe(update);
-    const unsub2 = walletStore.subscribe(update);
-    return () => {
-      isMounted = false;
-      unsub1();
-      unsub2();
-    };
-  }, []);
+    dispatch(fetchServices());
+    dispatch(fetchWallet());
+  }, [dispatch]);
 
   // Check Wallet Balance before opening application modal
   const handleInitiateApply = async (parentService: ServiceItem, subService?: SubServiceItem) => {
@@ -137,7 +118,8 @@ export default function AgentServices() {
       ? `${parentService.name} (${subService.name})`
       : (subService ? subService.name : parentService.name);
 
-    if (walletBalance < fee) {
+    // Wallet abhi load nahi hua to client-side check skip (backend fee validate karta hai)
+    if (walletStatus === 'succeeded' && walletBalance < fee) {
       setLowBalanceAlert({
         show: true,
         requiredFee: fee,
@@ -154,11 +136,16 @@ export default function AgentServices() {
     setRawFiles({});
     setSelectedAreaLabel('');
     setSelectedWardNo('');
+    // Pichli service ke areas stale na dikhein
+    setAvailableAreas({ mode: 'single', areas: [], wards: [], areaDetails: [], wardDetails: [], basePrice: 0, hasOperators: true });
+    setAreasLoading(true);
+    const requestId = ++areasRequestId.current;
 
     // Fetch routing areas for selected service
     try {
       const query = subService ? `sub_service_id=${subService.id}` : `service_id=${parentService.id}`;
       const res = await apiClient.get(`/operator-assignments/areas?${query}`);
+      if (requestId !== areasRequestId.current) return; // dusri service khul chuki hai
       if (res.data.status === 'success') {
         const data = res.data.data;
         setAvailableAreas(data);
@@ -167,7 +154,11 @@ export default function AgentServices() {
       }
     } catch (e) {
       console.error('Failed to fetch available areas:', e);
-      setAvailableAreas({ mode: 'single', areas: [], wards: [], hasOperators: true });
+      if (requestId === areasRequestId.current) {
+        setAvailableAreas({ mode: 'single', areas: [], wards: [], hasOperators: true });
+      }
+    } finally {
+      if (requestId === areasRequestId.current) setAreasLoading(false);
     }
   };
 
@@ -206,12 +197,12 @@ export default function AgentServices() {
   };
 
   // Submit Application to Real Backend API
-  const handleApplyServiceSubmit = async (e: React.FormEvent) => {
+  const handleApplyServiceSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedService) return;
+    if (!selectedService || areasLoading) return;
     setErrorMsg('');
 
-    if (activeFee > walletBalance) {
+    if (walletStatus === 'succeeded' && activeFee > walletBalance) {
       setLowBalanceAlert({
         show: true,
         requiredFee: activeFee,
@@ -253,8 +244,6 @@ export default function AgentServices() {
       return;
     }
 
-    setIsProcessing(true);
-
     const serviceTitle = selectedService.hasSubServices && selectedSubService
       ? (selectedService.name === selectedSubService.name
           ? selectedService.name
@@ -295,26 +284,29 @@ export default function AgentServices() {
       }
     });
 
-    try {
-      const response = await apiClient.post('/applications/apply', formDataPayload, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+    applyAction.run(async () => {
+      try {
+        const response = await apiClient.post('/applications/apply', formDataPayload, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
 
-      if (response.data.status === 'success') {
-        const appNo = response.data.data?.applicationNo || 'APP-SUCCESS';
-        await walletStore.syncBackend();
-        setSuccessMsg(`Service application "${appNo}" for "${serviceTitle}" submitted successfully! Fee ₹${activeFee.toFixed(2)} deducted.`);
-        setSelectedService(null);
-        setDrillDownService(null);
-        setTimeout(() => setSuccessMsg(''), 6000);
-      } else {
+        if (response.data.status === 'success') {
+          const appNo = response.data.data?.applicationNo || 'APP-SUCCESS';
+          // Header + page wallet balance turant update ho
+          dispatch(fetchWallet());
+          setSuccessMsg(`Service application "${appNo}" for "${serviceTitle}" submitted successfully! Fee ₹${activeFee.toFixed(2)} deducted.`);
+          setSelectedService(null);
+          setDrillDownService(null);
+          setTimeout(() => setSuccessMsg(''), 6000);
+          return true;
+        }
         setErrorMsg(response.data.message || 'Failed to apply.');
+        return false;
+      } catch (err: any) {
+        setErrorMsg(err.response?.data?.message || err.message || 'Server error while submitting application.');
+        return false;
       }
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Server error while submitting application.');
-    } finally {
-      setIsProcessing(false);
-    }
+    });
   };
 
   const filteredServices = services.filter(s => {
@@ -328,30 +320,11 @@ export default function AgentServices() {
   // Helper to render icon/logo
   const renderLogo = (iconUrl?: string) => {
     if (iconUrl) {
-      const src = iconUrl.startsWith('http') || iconUrl.startsWith('data:') ? iconUrl : `http://localhost:5000${iconUrl}`;
+      const src = iconUrl.startsWith('http') || iconUrl.startsWith('data:') ? iconUrl : `${FILE_BASE_URL}${iconUrl}`;
       return <img src={src} alt="" className="h-full w-full object-contain p-1" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
     }
     return <Layers className="h-8 w-8 text-blue-600" />;
   };
-
-  if (isLoading) {
-    return (
-      <DashboardLayout>
-        <div className="min-h-[500px] flex flex-col items-center justify-center py-20 px-4">
-          <div className="relative flex items-center justify-center mb-6">
-            <div className="absolute inset-0 rounded-full bg-blue-500/20 animate-ping"></div>
-            <div className="relative h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-xl shadow-blue-500/30">
-              <Loader2 className="h-8 w-8 animate-spin" />
-            </div>
-          </div>
-          <h3 className="text-lg font-bold text-slate-900 tracking-tight mb-1">Services Catalog Loading...</h3>
-          <p className="text-xs text-slate-500 max-w-sm text-center">
-            Portal se saari active Government Services aur application forms load ho rahe hain. Kripya prateeksha karein.
-          </p>
-        </div>
-      </DashboardLayout>
-    );
-  }
 
   return (
     <DashboardLayout>
@@ -384,7 +357,11 @@ export default function AgentServices() {
 
               <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-600/20 border border-emerald-400/30 px-4 py-2 rounded-xl text-center shrink-0 backdrop-blur-sm">
                 <span className="text-[10px] font-bold text-emerald-300 uppercase block">Wallet</span>
-                <span className="text-lg font-black text-emerald-300">₹{walletBalance.toFixed(0)}</span>
+                {walletLoading ? (
+                  <Skeleton className="h-6 w-16 mt-0.5 bg-white/20!" />
+                ) : (
+                  <span className="text-lg font-black text-emerald-300">₹{walletBalance.toFixed(0)}</span>
+                )}
               </div>
             </div>
           </div>
@@ -490,10 +467,13 @@ export default function AgentServices() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                 <Grid3X3 className="h-4 w-4 text-blue-600" />
-                Available Services ({filteredServices.length})
+                Available Services ({isLoading ? '…' : filteredServices.length})
               </h3>
             </div>
 
+            {isLoading ? (
+              <SkeletonGrid count={6} className="grid-cols-1! sm:grid-cols-2! lg:grid-cols-3! gap-6" />
+            ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredServices.length === 0 ? (
                 <div className="col-span-full py-16 text-center text-slate-400 text-sm bg-white rounded-2xl border border-slate-200">
@@ -561,6 +541,7 @@ export default function AgentServices() {
                 })
               )}
             </div>
+            )}
           </div>
         )}
 
@@ -656,8 +637,16 @@ export default function AgentServices() {
                   </div>
                 )}
 
+                {/* Areas fetch ho rahe hain — dropdown placeholder */}
+                {areasLoading && (
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-2xl border border-blue-200 space-y-2" aria-busy="true">
+                    <Skeleton className="h-3 w-40" />
+                    <Skeleton className="h-10 w-full rounded-xl" />
+                  </div>
+                )}
+
                 {/* Smart Area / Ward Location Dropdown based on Service Routing Mode */}
-                {availableAreas.mode !== 'single' && (
+                {!areasLoading && availableAreas.mode !== 'single' && (
                   <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-2xl border border-blue-200 space-y-2">
                     <div className="flex items-center gap-1.5 font-bold text-xs text-blue-900">
                       <MapPin className="h-4 w-4 text-blue-600" />
@@ -704,7 +693,7 @@ export default function AgentServices() {
                   </div>
                 )}
 
-                {!availableAreas.hasOperators && (
+                {!areasLoading && !availableAreas.hasOperators && (
                   <div className="p-3.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold flex items-center gap-2">
                     <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                     <span>Is service ke liye abhi koi operator available nahi hai.</span>
@@ -827,14 +816,18 @@ export default function AgentServices() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
-                    disabled={isProcessing}
+                    state={applyAction.state}
+                    disabled={areasLoading}
+                    loadingText="Submitting..."
+                    successText="Applied!"
+                    errorText="Failed"
                     className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                   >
                     <Wallet className="h-4 w-4" />
-                    <span>{isProcessing ? 'Processing...' : `Pay ₹${activeFee.toFixed(2)} & Apply`}</span>
-                  </button>
+                    <span>{`Pay ₹${activeFee.toFixed(2)} & Apply`}</span>
+                  </ActionButton>
                 </div>
               </form>
 

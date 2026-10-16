@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import apiClient from '../../api/client';
+import apiClient, { FILE_BASE_URL } from '../../api/client';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { SkeletonCards, SkeletonTableRows } from '../../components/ui/Skeleton';
+import { useAsyncAction, useKeyedAsyncAction } from '../../hooks/useAsyncAction';
 import {
   UserCheck,
   CheckCircle2,
@@ -63,12 +66,24 @@ interface ApplicationItem {
   agentName?: string;
   shopName?: string;
   documents?: ApplicationDoc[];
-  completionOutputData?: string | { note?: string; files?: ApplicationDoc[] };
+  completionOutputData?: string | CompletionOutput;
 }
+
+// Backend completion_output_data: note + files + operator ke bhare hue field values (key -> value)
+interface CompletionOutput {
+  note?: string;
+  files?: any[];
+  outputValues?: Record<string, any>;
+}
+
+// MySQL 'YYYY-MM-DD HH:MM:SS' Safari me Invalid Date deta hai, isliye 'T' lagate hain
+const parseDate = (value?: string) => new Date(String(value || '').replace(' ', 'T'));
 
 export default function OperatorServiceRequests() {
   const [tasks, setTasks] = useState<ApplicationItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  // Pehli load par skeleton; baad ke refresh par sirf icon spin
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [activeTab, setActiveTab] = useState<'PENDING' | 'COMPLETED' | 'VERIFIED' | 'REJECTED' | 'ALL'>('PENDING');
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -79,15 +94,19 @@ export default function OperatorServiceRequests() {
   const [deliverableFiles, setDeliverableFiles] = useState<Record<string, File>>({});
   const [operatorInputValues, setOperatorInputValues] = useState<Record<string, string>>({});
   const [errorMsg, setErrorMsg] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const completeAction = useAsyncAction();
+  const downloadAction = useKeyedAsyncAction();
 
   // Reject Modal State
   const [rejectModalTask, setRejectModalTask] = useState<ApplicationItem | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [rejectErrorMsg, setRejectErrorMsg] = useState('');
+  const rejectAction = useAsyncAction();
 
   // Price Request Modal State
   const [showPriceModal, setShowPriceModal] = useState(false);
   const [myPriceRequests, setMyPriceRequests] = useState<any[]>([]);
+  const [isPriceRequestsLoading, setIsPriceRequestsLoading] = useState(true);
   const [myAssignments, setMyAssignments] = useState<any[]>([]);
   const [priceSubServiceId, setPriceSubServiceId] = useState('');
   const [priceAssignmentId, setPriceAssignmentId] = useState('');
@@ -95,86 +114,88 @@ export default function OperatorServiceRequests() {
   const [priceAreaOrWardLabel, setPriceAreaOrWardLabel] = useState('');
   const [priceNewRequested, setPriceNewRequested] = useState('');
   const [priceReason, setPriceReason] = useState('');
-  const [priceSubmitting, setPriceSubmitting] = useState(false);
   const [priceModalError, setPriceModalError] = useState('');
   const [priceModalSuccess, setPriceModalSuccess] = useState('');
+  const priceAction = useAsyncAction();
+  // Selected assignment ref me bhi rakhte hain taaki fetch callback ko dependency na banana pade
+  const priceAssignmentIdRef = useRef('');
 
   const fetchQueue = useCallback(async () => {
-    setIsLoading(true);
     try {
       const res = await apiClient.get('/applications/operator-queue');
-      if (res.data.status === 'success') {
+      if (res.data.status === 'success' && Array.isArray(res.data.data)) {
         setTasks(res.data.data);
       }
     } catch (e) {
       console.error('Failed to fetch operator queue:', e);
     } finally {
       setIsLoading(false);
+      setHasLoadedOnce(true);
     }
   }, []);
 
   const fetchPriceRequests = useCallback(async () => {
     try {
       const res = await apiClient.get('/services/price-requests');
-      if (res.data.status === 'success') {
+      if (res.data.status === 'success' && Array.isArray(res.data.data)) {
         setMyPriceRequests(res.data.data);
       }
     } catch (e) {
       console.error('Failed to fetch price requests', e);
+    } finally {
+      setIsPriceRequestsLoading(false);
     }
   }, []);
 
-  const fetchMyAssignments = useCallback(async () => {
+  // Dropdown selection -> service / routing / area fields set karna
+  const selectAssignment = useCallback((a: any) => {
+    const id = String(a.id ?? '');
+    priceAssignmentIdRef.current = id;
+    setPriceAssignmentId(id);
+    setPriceSubServiceId(a.subServiceId);
+    setPriceRoutingMode(a.assignmentMode || 'single');
+    setPriceAreaOrWardLabel(a.areaLabel || (a.wardNo ? `Ward #${a.wardNo}` : 'Default Service'));
+  }, []);
+
+  // forceSelectFirst = modal open par hamesha pehla assignment select karo; warna sirf jab kuch selected na ho
+  const fetchMyAssignments = useCallback(async (forceSelectFirst = false) => {
     try {
       const res = await apiClient.get('/operator-assignments');
       if (res.data.status === 'success') {
         const list = res.data.data || [];
         setMyAssignments(list);
-        if (list.length > 0 && !priceAssignmentId) {
-          const first = list[0];
-          setPriceAssignmentId(first.id);
-          setPriceSubServiceId(first.subServiceId);
-          setPriceRoutingMode(first.assignmentMode || 'single');
-          setPriceAreaOrWardLabel(first.areaLabel || (first.wardNo ? `Ward #${first.wardNo}` : 'Default Service'));
+        if (list.length > 0 && (forceSelectFirst || !priceAssignmentIdRef.current)) {
+          selectAssignment(list[0]);
         }
       }
     } catch (e) {
       console.error('Failed to fetch my assignments', e);
     }
-  }, [priceAssignmentId]);
+  }, [selectAssignment]);
 
+  // Mount par sirf ek baar (dropdown change se queue refetch nahi hoti)
   useEffect(() => {
     fetchQueue();
     fetchPriceRequests();
     fetchMyAssignments();
   }, [fetchQueue, fetchPriceRequests, fetchMyAssignments]);
 
-  const handleOpenPriceModal = async () => {
+  // Manual refresh: spinner on, phir queue reload
+  const refreshQueue = () => {
+    setIsLoading(true);
+    fetchQueue();
+  };
+
+  const handleOpenPriceModal = () => {
     setPriceModalError('');
     setPriceModalSuccess('');
     setPriceNewRequested('');
     setPriceReason('');
     setShowPriceModal(true);
-
-    try {
-      const res = await apiClient.get('/operator-assignments');
-      if (res.data.status === 'success') {
-        const list = res.data.data || [];
-        setMyAssignments(list);
-        if (list.length > 0) {
-          const first = list[0];
-          setPriceAssignmentId(first.id);
-          setPriceSubServiceId(first.subServiceId);
-          setPriceRoutingMode(first.assignmentMode || 'single');
-          setPriceAreaOrWardLabel(first.areaLabel || (first.wardNo ? `Ward #${first.wardNo}` : 'Default Service'));
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch my assignments on modal open', e);
-    }
+    fetchMyAssignments(true);
   };
 
-  const handlePriceRequestSubmit = async (e: React.FormEvent) => {
+  const handlePriceRequestSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPriceModalError('');
     setPriceModalSuccess('');
@@ -185,35 +206,37 @@ export default function OperatorServiceRequests() {
       return;
     }
 
-    setPriceSubmitting(true);
-    try {
-      const res = await apiClient.post('/services/price-requests', {
-        subServiceId: priceSubServiceId,
-        assignmentId: priceAssignmentId || undefined,
-        routingMode: priceRoutingMode,
-        areaOrWardLabel: priceAreaOrWardLabel || undefined,
-        requestedPrice: val,
-        reason: priceReason
-      });
+    priceAction.run(async () => {
+      try {
+        const res = await apiClient.post('/services/price-requests', {
+          subServiceId: priceSubServiceId,
+          assignmentId: priceAssignmentId || undefined,
+          routingMode: priceRoutingMode,
+          areaOrWardLabel: priceAreaOrWardLabel || undefined,
+          requestedPrice: val,
+          reason: priceReason
+        });
 
-      if (res.data.status === 'success') {
+        if (res.data.status !== 'success') {
+          setPriceModalError(res.data.message || 'Failed to submit price request.');
+          return false;
+        }
         setPriceModalSuccess(res.data.message || 'Price change request submitted!');
         setPriceNewRequested('');
         setPriceReason('');
         await fetchPriceRequests();
         setTimeout(() => setPriceModalSuccess(''), 4000);
+      } catch (err: any) {
+        setPriceModalError(err.response?.data?.message || 'Failed to submit price request.');
+        throw err;
       }
-    } catch (err: any) {
-      setPriceModalError(err.response?.data?.message || 'Failed to submit price request.');
-    } finally {
-      setPriceSubmitting(false);
-    }
+    });
   };
 
   const getFileUrl = (filePath: string) => {
     if (!filePath) return '';
     if (filePath.startsWith('http') || filePath.startsWith('blob:')) return filePath;
-    return `http://localhost:5000${filePath}`;
+    return `${FILE_BASE_URL}${filePath}`;
   };
 
   const handleDownloadFile = (filePath: string, fileName: string) => {
@@ -237,7 +260,7 @@ export default function OperatorServiceRequests() {
     }
   };
 
-  const getOperatorNote = (data?: string | { note?: string; files?: ApplicationDoc[] }): string => {
+  const getOperatorNote = (data?: string | CompletionOutput): string => {
     if (!data) return '';
     if (typeof data === 'object') return data.note || '';
     try {
@@ -250,9 +273,10 @@ export default function OperatorServiceRequests() {
 
   const getParsedCompletionOutput = (data?: string | object) => {
     if (!data) return null;
-    if (typeof data === 'object') return data as { note?: string; files?: any[] };
+    if (typeof data === 'object') return data as CompletionOutput;
     try {
-      return JSON.parse(data) as { note?: string; files?: any[] };
+      const parsed = JSON.parse(data);
+      return parsed && typeof parsed === 'object' ? (parsed as CompletionOutput) : null;
     } catch {
       return null;
     }
@@ -335,6 +359,23 @@ export default function OperatorServiceRequests() {
     );
   }, [parsedFormSchema]);
 
+  // Operator ke submit kiye field values (outputValues) -> label + value rows
+  // Label service form schema se resolve hota hai (key = field.id || field.label), na mile to key hi dikhate hain
+  const getOperatorOutputRows = (data?: string | object): { key: string; label: string; value: string }[] => {
+    const values = getParsedCompletionOutput(data)?.outputValues;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return [];
+    return Object.entries(values)
+      .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+      .map(([key, v]) => {
+        const field = parsedFormSchema.find(f => (f.id || f.label) === key || f.id === key || f.label === key);
+        return {
+          key,
+          label: field?.label || key,
+          value: typeof v === 'object' ? JSON.stringify(v) : String(v)
+        };
+      });
+  };
+
   const handleOpenCombinedModal = (t: ApplicationItem) => {
     setSelectedTask(t);
     setOutputNote('');
@@ -343,10 +384,11 @@ export default function OperatorServiceRequests() {
     setErrorMsg('');
   };
 
-  const handleCompleteSubmit = async (e?: React.FormEvent) => {
+  const handleCompleteSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!selectedTask) return;
     setErrorMsg('');
+    const task = selectedTask;
 
     // Strict validation for required operator fields configured by Admin
     for (const field of operatorFields) {
@@ -367,7 +409,6 @@ export default function OperatorServiceRequests() {
       }
     }
 
-    setIsSubmitting(true);
     const formDataPayload = new FormData();
     formDataPayload.append('outputNote', outputNote.trim());
 
@@ -379,45 +420,59 @@ export default function OperatorServiceRequests() {
       formDataPayload.append(`deliverable_${key}`, file);
     });
 
-    try {
-      const res = await apiClient.post(`/applications/${selectedTask.id}/complete`, formDataPayload, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+    completeAction.run(async () => {
+      try {
+        const res = await apiClient.post(`/applications/${task.id}/complete`, formDataPayload, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
 
-      if (res.data.status === 'success') {
-        setSuccessMsg(`Task "${selectedTask.applicationNo}" marked as COMPLETED! Submitted to Admin/Manager for Verification.`);
+        if (res.data.status !== 'success') {
+          setErrorMsg(res.data.message || 'Failed to complete task.');
+          return false;
+        }
+        setSuccessMsg(`Task "${task.applicationNo}" marked as COMPLETED! Submitted to Admin/Manager for Verification.`);
         setSelectedTask(null);
         await fetchQueue();
         setTimeout(() => setSuccessMsg(''), 5000);
-      } else {
-        setErrorMsg(res.data.message || 'Failed to complete task.');
+      } catch (err: any) {
+        setErrorMsg(err.response?.data?.message || 'Server error while completing task.');
+        throw err;
       }
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Server error while completing task.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
-  const handleRejectSubmit = async (e: React.FormEvent) => {
+  const openRejectModal = (t: ApplicationItem) => {
+    setRejectErrorMsg('');
+    setRejectModalTask(t);
+  };
+
+  const handleRejectSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rejectModalTask) return;
+    const task = rejectModalTask;
+    setRejectErrorMsg('');
 
-    try {
-      const res = await apiClient.patch(`/applications/${rejectModalTask.id}/reject`, {
-        reason: rejectReason || 'Application rejected by Operator'
-      });
+    // 3-stage button + double-submit guard (useAsyncAction loading ke dauraan dobara call ignore karta hai)
+    rejectAction.run(async () => {
+      try {
+        const res = await apiClient.patch(`/applications/${task.id}/reject`, {
+          reason: rejectReason || 'Application rejected by Operator'
+        });
 
-      if (res.data.status === 'success') {
-        setSuccessMsg(`Task "${rejectModalTask.applicationNo}" REJECTED & fee refunded back to shop wallet.`);
+        if (res.data.status !== 'success') {
+          setRejectErrorMsg(res.data.message || 'Failed to reject task.');
+          return false;
+        }
+        setSuccessMsg(`Task "${task.applicationNo}" REJECTED & fee refunded back to shop wallet.`);
         setRejectModalTask(null);
         setRejectReason('');
         await fetchQueue();
         setTimeout(() => setSuccessMsg(''), 5000);
+      } catch (err: any) {
+        setRejectErrorMsg(err.response?.data?.message || 'Failed to reject task.');
+        throw err;
       }
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to reject task.');
-    }
+    });
   };
 
   const filtered = tasks.filter(t => {
@@ -468,7 +523,7 @@ export default function OperatorServiceRequests() {
             </button>
 
             <button
-              onClick={fetchQueue}
+              onClick={refreshQueue}
               disabled={isLoading}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs cursor-pointer"
             >
@@ -533,7 +588,9 @@ export default function OperatorServiceRequests() {
           </div>
 
           <div className="p-4 sm:p-6 space-y-4 bg-slate-50/60">
-            {filtered.length === 0 ? (
+            {isLoading && !hasLoadedOnce ? (
+              <SkeletonCards count={4} />
+            ) : filtered.length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-xs sm:text-sm bg-white rounded-2xl border border-dashed border-slate-200">
                 No service applications found in this filter.
               </div>
@@ -601,7 +658,7 @@ export default function OperatorServiceRequests() {
                     {/* Action Row */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
                       <div className="text-slate-400 text-[11px] font-mono">
-                        Applied On: {new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                        Applied On: {parseDate(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
@@ -616,7 +673,7 @@ export default function OperatorServiceRequests() {
                             </button>
 
                             <button
-                              onClick={() => setRejectModalTask(item)}
+                              onClick={() => openRejectModal(item)}
                               className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold px-4 py-2 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer"
                             >
                               <XCircle className="h-4 w-4 text-red-600" />
@@ -733,13 +790,16 @@ export default function OperatorServiceRequests() {
                                   <span className="text-[10px] font-bold text-emerald-800 uppercase block">{doc.label}</span>
                                   <span className="font-mono text-xs font-bold text-slate-900 truncate block">{doc.fileName}</span>
                                 </div>
-                                <button
-                                  onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                                <ActionButton
+                                  state={downloadAction.stateOf(`client-${idx}`)}
+                                  onClick={() => downloadAction.run(`client-${idx}`, () => handleDownloadFile(doc.filePath, doc.fileName))}
+                                  loadingText="Opening..."
+                                  successText="Opened"
                                   className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
                                 >
                                   <Download className="h-3.5 w-3.5" />
                                   <span>Download Document</span>
-                                </button>
+                                </ActionButton>
                               </div>
                             ))}
                           </div>
@@ -879,7 +939,8 @@ export default function OperatorServiceRequests() {
                   (() => {
                     const { operatorDocs } = getDocumentCategories(selectedTask.documents, selectedTask.completionOutputData);
                     const opNote = getOperatorNote(selectedTask.completionOutputData);
-                    if (!opNote && operatorDocs.length === 0) return null;
+                    const outputRows = getOperatorOutputRows(selectedTask.completionOutputData);
+                    if (!opNote && operatorDocs.length === 0 && outputRows.length === 0) return null;
 
                     return (
                       <div className="space-y-3 pt-3 border-t border-slate-200 bg-teal-50/70 p-4 rounded-2xl border border-teal-200">
@@ -887,6 +948,20 @@ export default function OperatorServiceRequests() {
                           <CheckCircle2 className="h-4 w-4 text-teal-600" />
                           <span>Submitted Operator Deliverables ({operatorDocs.length})</span>
                         </h4>
+
+                        {outputRows.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[10px] font-bold text-teal-700 uppercase block">Operator Output Details</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              {outputRows.map(row => (
+                                <div key={row.key} className="bg-white p-3 rounded-xl border border-teal-200">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase block">{row.label}</span>
+                                  <span className="text-xs font-bold text-slate-900 break-words">{row.value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {opNote && (
                           <div>
@@ -905,13 +980,16 @@ export default function OperatorServiceRequests() {
                                   <span className="text-[10px] font-bold text-teal-700 uppercase block">{doc.label}</span>
                                   <span className="font-mono text-xs font-bold text-slate-900 truncate block">{doc.fileName}</span>
                                 </div>
-                                <button
-                                  onClick={() => handleDownloadFile(doc.filePath, doc.fileName)}
+                                <ActionButton
+                                  state={downloadAction.stateOf(`operator-${idx}`)}
+                                  onClick={() => downloadAction.run(`operator-${idx}`, () => handleDownloadFile(doc.filePath, doc.fileName))}
+                                  loadingText="Opening..."
+                                  successText="Opened"
                                   className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
                                 >
                                   <Download className="h-3.5 w-3.5" />
                                   <span>Download Deliverable</span>
-                                </button>
+                                </ActionButton>
                               </div>
                             ))}
                           </div>
@@ -932,7 +1010,7 @@ export default function OperatorServiceRequests() {
                       onClick={() => {
                         const taskToReject = selectedTask;
                         setSelectedTask(null);
-                        setRejectModalTask(taskToReject);
+                        openRejectModal(taskToReject);
                       }}
                       className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                     >
@@ -952,15 +1030,17 @@ export default function OperatorServiceRequests() {
                   </button>
 
                   {['pending', 'assigned', 'processing'].includes(selectedTask.status?.toLowerCase()) && (
-                    <button
-                      type="button"
-                      onClick={handleCompleteSubmit}
-                      disabled={isSubmitting}
+                    <ActionButton
+                      state={completeAction.state}
+                      onClick={() => handleCompleteSubmit()}
+                      loadingText="Submitting..."
+                      successText="Submitted!"
+                      errorText="Failed"
                       className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                     >
                       <CheckCircle2 className="h-4 w-4" />
-                      <span>{isSubmitting ? 'Submitting...' : 'Complete & Submit to Admin'}</span>
-                    </button>
+                      <span>Complete & Submit to Admin</span>
+                    </ActionButton>
                   )}
                 </div>
               </div>
@@ -988,6 +1068,13 @@ export default function OperatorServiceRequests() {
                 <div>Application No: <strong className="font-mono text-slate-800">{rejectModalTask.applicationNo}</strong></div>
               </div>
 
+              {rejectErrorMsg && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                  <span>{rejectErrorMsg}</span>
+                </div>
+              )}
+
               <form onSubmit={handleRejectSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -1011,13 +1098,17 @@ export default function OperatorServiceRequests() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <ActionButton
                     type="submit"
+                    state={rejectAction.state}
+                    loadingText="Rejecting..."
+                    successText="Rejected!"
+                    errorText="Failed"
                     className="px-4.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 cursor-pointer"
                   >
                     <XCircle className="h-4 w-4" />
                     <span>Confirm Rejection & Refund</span>
-                  </button>
+                  </ActionButton>
                 </div>
               </form>
             </div>
@@ -1070,12 +1161,13 @@ export default function OperatorServiceRequests() {
                         value={priceAssignmentId}
                         onChange={(e) => {
                           const selectedId = e.target.value;
-                          setPriceAssignmentId(selectedId);
-                          const match = myAssignments.find(a => a.id === selectedId);
+                          // Sirf local selection badalta hai — koi refetch nahi
+                          const match = myAssignments.find(a => String(a.id) === selectedId);
                           if (match) {
-                            setPriceSubServiceId(match.subServiceId);
-                            setPriceRoutingMode(match.assignmentMode || 'single');
-                            setPriceAreaOrWardLabel(match.areaLabel || (match.wardNo ? `Ward #${match.wardNo}` : 'Default Service'));
+                            selectAssignment(match);
+                          } else {
+                            priceAssignmentIdRef.current = selectedId;
+                            setPriceAssignmentId(selectedId);
                           }
                         }}
                         className="w-full bg-white border border-teal-500/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 shadow-2xs cursor-pointer"
@@ -1134,14 +1226,18 @@ export default function OperatorServiceRequests() {
                   </div>
 
                   <div className="flex justify-end pt-1">
-                    <button
+                    <ActionButton
                       type="submit"
-                      disabled={priceSubmitting || myAssignments.length === 0}
+                      state={priceAction.state}
+                      disabled={myAssignments.length === 0}
+                      loadingText="Submitting..."
+                      successText="Submitted!"
+                      errorText="Failed"
                       className="px-5 py-2.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 flex items-center gap-1.5 transition-all"
                     >
-                      {priceSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                      <Plus className="h-3.5 w-3.5" />
                       <span>Submit Request to Admin</span>
-                    </button>
+                    </ActionButton>
                   </div>
                 </form>
 
@@ -1160,7 +1256,9 @@ export default function OperatorServiceRequests() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {myPriceRequests.length === 0 ? (
+                        {isPriceRequestsLoading && myPriceRequests.length === 0 ? (
+                          <SkeletonTableRows rows={3} cols={5} />
+                        ) : myPriceRequests.length === 0 ? (
                           <tr>
                             <td colSpan={5} className="p-6 text-center text-slate-400 italic">No price change requests submitted yet.</td>
                           </tr>
@@ -1184,7 +1282,7 @@ export default function OperatorServiceRequests() {
                                     pr.status === 'rejected' ? 'bg-red-100 text-red-800 border border-red-200' :
                                     'bg-amber-100 text-amber-800 border border-amber-200'
                                   }`}>
-                                    {pr.status.toUpperCase()}
+                                    {String(pr.status || '').toUpperCase()}
                                   </span>
                                 </td>
                                 <td className="p-2.5 text-slate-500 italic text-[11px]">{pr.adminRemarks || 'N/A'}</td>

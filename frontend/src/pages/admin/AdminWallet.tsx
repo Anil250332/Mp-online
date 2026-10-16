@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { walletStore, type WalletTransaction } from '../../services/walletStore';
+import { useAppDispatch, useAppSelector, selectWalletTransactions, selectWalletStatus, isInitialLoading } from '../../store/hooks';
+import { fetchWallet } from '../../store/slices/walletSlice';
+import { SkeletonStatCards, SkeletonTableRows } from '../../components/ui/Skeleton';
 import {
   Wallet,
   ArrowDownRight,
@@ -12,34 +14,37 @@ import {
 } from 'lucide-react';
 
 export default function AdminWallet() {
-  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const dispatch = useAppDispatch();
+  // Redux se transactions (frozen state — mutate nahi karna)
+  const transactions = useAppSelector(selectWalletTransactions);
+  const walletStatus = useAppSelector(selectWalletStatus);
+  const showSkeleton = isInitialLoading(walletStatus, transactions.length);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'CREDIT' | 'DEBIT'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Page open hote hi fresh ledger fetch (pehle stale data dikhta tha)
   useEffect(() => {
-    const updateState = () => {
-      setTransactions(walletStore.getTransactions());
-    };
-    updateState();
-    const unsubscribe = walletStore.subscribe(updateState);
-    return unsubscribe;
-  }, []);
+    dispatch(fetchWallet());
+  }, [dispatch]);
 
-  const totalInflow = transactions
-    .filter(t => t.type === 'CREDIT' && t.status === 'SUCCESS')
-    .reduce((sum, t) => sum + t.amount, 0);
+  // Sirf wallet topup (recharge) hi platform inflow hai — refund / operator earning CREDIT count nahi
+  const topupTxns = transactions.filter(t => t.type === 'CREDIT' && t.category === 'topup');
+  const totalInflow = topupTxns
+    .filter(t => t.status === 'SUCCESS')
+    .reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
+  // Service revenue = sirf service_fee debits (withdrawal shamil nahi)
   const totalDebits = transactions
-    .filter(t => t.type === 'DEBIT' && t.status === 'SUCCESS')
-    .reduce((sum, t) => sum + t.amount, 0);
+    .filter(t => t.type === 'DEBIT' && t.category === 'service_fee' && t.status === 'SUCCESS')
+    .reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
   const filteredTxns = transactions.filter(t => {
     const matchesSearch =
-      t.txnNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.txnNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (t.userName && t.userName.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (t.shopName && t.shopName.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (t.userMobile && t.userMobile.includes(searchTerm)) ||
-      t.remarks.toLowerCase().includes(searchTerm.toLowerCase());
+      (t.remarks || '').toLowerCase().includes(searchTerm.toLowerCase());
 
     if (activeFilter === 'ALL') return matchesSearch;
     return matchesSearch && t.type === activeFilter;
@@ -63,6 +68,9 @@ export default function AdminWallet() {
         </div>
 
         {/* 3 Summary Cards */}
+        {showSkeleton ? (
+          <SkeletonStatCards count={3} className="lg:grid-cols-3" />
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex items-center gap-4">
             <div className="h-12 w-12 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0">
@@ -82,7 +90,7 @@ export default function AdminWallet() {
             <div>
               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Recharges Count</p>
               <h3 className="text-2xl font-black text-slate-900 mt-0.5">
-                {transactions.filter(t => t.type === 'CREDIT').length}
+                {topupTxns.length}
               </h3>
               <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Shop Retailer Topup Requests</p>
             </div>
@@ -99,6 +107,7 @@ export default function AdminWallet() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Filter Bar & Search */}
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-4">
@@ -152,7 +161,9 @@ export default function AdminWallet() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
-                {filteredTxns.length === 0 ? (
+                {showSkeleton ? (
+                  <SkeletonTableRows rows={6} cols={6} />
+                ) : filteredTxns.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-slate-400 text-xs">
                       No wallet transactions found.
@@ -190,7 +201,7 @@ export default function AdminWallet() {
                       <td className={`py-3.5 px-4 text-right font-bold text-sm ${
                         txn.type === 'CREDIT' ? 'text-emerald-600' : 'text-red-600'
                       }`}>
-                        {txn.type === 'CREDIT' ? '+' : '-'} ₹{txn.amount.toFixed(2)}
+                        {txn.type === 'CREDIT' ? '+' : '-'} ₹{Number(txn.amount || 0).toFixed(2)}
                       </td>
 
                       <td className="py-3.5 px-4 text-right text-xs">

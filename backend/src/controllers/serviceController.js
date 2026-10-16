@@ -1,6 +1,31 @@
 import pool from '../config/db.js';
 
 /**
+ * Service pricing validation: fee >= 0, admin commission 0-100 %, sub-service name zaroori.
+ * Returns error message ya null.
+ */
+const validateServicePayload = ({ hasSubServices, fee, adminCommissionPercent, subServices }) => {
+  const checkPrice = (f, c, label) => {
+    const feeNum = parseFloat(f || 0);
+    const commNum = parseFloat(c || 0);
+    if (isNaN(feeNum) || feeNum < 0) return `${label}: Fee 0 ya usse zyada honi chahiye.`;
+    if (isNaN(commNum) || commNum < 0 || commNum > 100) return `${label}: Admin commission 0 se 100 % ke beech hona chahiye.`;
+    return null;
+  };
+  if (hasSubServices) {
+    if (!Array.isArray(subServices) || subServices.length === 0) return 'Kam se kam ek sub-service add karein.';
+    for (const [i, sub] of subServices.entries()) {
+      const label = `Sub-service #${i + 1}`;
+      if (!sub || !String(sub.name || '').trim()) return `${label}: Name zaroori hai.`;
+      const err = checkPrice(sub.fee, sub.adminCommissionPercent, `${label} (${sub.name})`);
+      if (err) return err;
+    }
+    return null;
+  }
+  return checkPrice(fee, adminCommissionPercent, 'Service');
+};
+
+/**
  * Helper to safely parse JSON
  */
 const safeJsonParse = (val, defaultVal = []) => {
@@ -71,7 +96,7 @@ export const getServices = async (req, res) => {
         name: sub.name,
         code: sub.code,
         iconUrl: sub.iconUrl || '',
-        fee: parseFloat(sub.fee || sub.agentFee || 0),
+        fee: parseFloat(sub.fee) > 0 ? parseFloat(sub.fee) : parseFloat(sub.agentFee || 0),
         adminCommissionPercent: parseFloat(sub.adminCommissionPercent || 0),
         description: sub.description || '',
         formFields: safeJsonParse(sub.formSchema, []),
@@ -165,7 +190,7 @@ export const getServiceById = async (req, res) => {
       name: sub.name,
       code: sub.code,
       iconUrl: sub.iconUrl || '',
-      fee: parseFloat(sub.fee || sub.agentFee || 0),
+      fee: parseFloat(sub.fee) > 0 ? parseFloat(sub.fee) : parseFloat(sub.agentFee || 0),
       adminCommissionPercent: parseFloat(sub.adminCommissionPercent || 0),
       description: sub.description || '',
       formFields: safeJsonParse(sub.formSchema, []),
@@ -221,6 +246,12 @@ export const addService = async (req, res) => {
     if (!name || !name.trim()) {
       await connection.rollback();
       return res.status(400).json({ status: 'error', message: 'Service name is required.' });
+    }
+
+    const addValidationError = validateServicePayload(req.body);
+    if (addValidationError) {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: addValidationError });
     }
 
     const parsedFee = hasSubServices ? 0 : parseFloat(fee || 0);
@@ -376,6 +407,16 @@ export const updateService = async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'Service not found in database.' });
     }
 
+    if (!name || !String(name).trim()) {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: 'Service name is required.' });
+    }
+    const updateValidationError = validateServicePayload(req.body);
+    if (updateValidationError) {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: updateValidationError });
+    }
+
     const serviceCode = `SRV-${id}`;
     const parsedFee = hasSubServices ? 0 : parseFloat(fee || 0);
     const parsedComm = hasSubServices ? 0 : parseFloat(adminCommissionPercent || 0);
@@ -444,7 +485,7 @@ export const updateService = async (req, res) => {
               admin_commission_percentage = ?,
               form_schema = ?,
               operator_assignment_mode = ?,
-              is_active = true
+              is_active = ?
             WHERE id = ? AND service_id = ?`,
             [
               sub.name.trim(),
@@ -457,6 +498,8 @@ export const updateService = async (req, res) => {
               subComm,
               subFormSchema,
               mode,
+              // Disabled sub-service save karne par wapas active nahi hogi
+              sub.isActive !== false,
               subIdNum,
               id
             ]

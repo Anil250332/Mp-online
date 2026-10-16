@@ -113,6 +113,28 @@ export const initDb = async () => {
       `);
     } catch (e) {}
 
+    // Ensure users.distributor_id exists (distributor network linking) — purane DB ke liye
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE users ADD COLUMN distributor_id BIGINT NULL;
+      `);
+    } catch (e) {}
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE shops ADD COLUMN distributor_id BIGINT NULL;
+      `);
+    } catch (e) {}
+
+    // Widen mime_type (e.g. .docx mimetype 71 chars hota hai, VARCHAR(50) me fail hota tha)
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE application_documents MODIFY COLUMN mime_type VARCHAR(150) NOT NULL;
+      `);
+    } catch (e) {}
+
     // Fix any invalid/empty status rows resulting from past truncation
     try {
       await rawConn.query(`
@@ -236,26 +258,14 @@ export const initDb = async () => {
 
     await rawConn.end();
 
-    // Auto-sync approved custom_fees from operator_assignments to sub_services and services
-    try {
-      await pool.query(`
-        UPDATE sub_services ss
-        JOIN operator_assignments oa ON ss.id = oa.sub_service_id
-        SET ss.fee = oa.custom_fee
-        WHERE oa.custom_fee IS NOT NULL AND oa.custom_fee > 0;
-      `);
-      await pool.query(`
-        UPDATE services s
-        JOIN sub_services ss ON s.id = ss.service_id
-        SET s.fee = ss.fee
-        WHERE ss.fee IS NOT NULL AND ss.fee > 0;
-      `);
-    } catch (e) {}
+    // NOTE: Pehle yahan har boot par custom_fee -> sub_services.fee overwrite hota tha (area-wise prices galat ho jaate the).
+    // Ab price sync sirf price request approval (priceRequestController) me hota hai.
 
-    // 3. Check and Seed Super Admin Demo Accounts
-    const [adminRows] = await pool.query("SELECT id FROM users WHERE mobile IN ('9999900001', '9999999999') LIMIT 1");
+    // 3. First-time setup: sirf tab Super Admin banega jab DB me ek bhi super_admin na ho
+    const [adminRows] = await pool.query("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1");
     if (adminRows.length === 0) {
-      const adminPasswordHash = await bcrypt.hash('Admin@123', 10);
+      const initialPassword = process.env.ADMIN_INITIAL_PASSWORD || 'Admin@123';
+      const adminPasswordHash = await bcrypt.hash(initialPassword, 10);
       const adminUuid = crypto.randomUUID();
 
       const [insertRes] = await pool.query(
@@ -265,9 +275,9 @@ export const initDb = async () => {
         [adminUuid, adminPasswordHash]
       );
 
-      await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 10000.00)', [insertRes.insertId]);
+      await pool.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [insertRes.insertId]);
 
-      console.log('👑 [Auto-Seed] Super Admin initialized: Mobile 9999900001 | Password Admin@123');
+      console.log('👑 [Auto-Seed] Super Admin initialized: Mobile 9999900001 (password: ADMIN_INITIAL_PASSWORD env ya default). ⚠️ Login ke baad turant password change karein.');
     }
 
     console.log(`✅ Connected to database '${dbConfig.database}' successfully!`);

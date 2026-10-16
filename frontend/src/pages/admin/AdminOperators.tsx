@@ -16,12 +16,22 @@ import {
   Building,
   Hash,
   Clock,
-  Loader2,
   Trash2,
   ShieldAlert,
   ShieldCheck,
-  Layers
+  Layers,
+  AlertCircle,
+  Ban
 } from 'lucide-react';
+import { useAsyncAction, useKeyedAsyncAction } from '../../hooks/useAsyncAction';
+import { ActionButton } from '../../components/ui/ActionButton';
+import { Skeleton, SkeletonTable } from '../../components/ui/Skeleton';
+
+// Axios / Error object se backend ka readable message
+const apiErrorText = (err: unknown, fallback: string) => {
+  const anyErr = err as { response?: { data?: { message?: string } }; message?: string };
+  return anyErr?.response?.data?.message || anyErr?.message || fallback;
+};
 
 interface OperatorItem {
   id: string;
@@ -83,17 +93,23 @@ const formatDateTime = (dateStr?: string) => {
 export default function AdminOperators() {
   const [operators, setOperators] = useState<OperatorItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'PENDING'>('ACTIVE');
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'PENDING' | 'REJECTED'>('ACTIVE');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedViewOperator, setSelectedViewOperator] = useState<OperatorItem | null>(null);
-  const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Row actions (approve / reject / toggle / remove) ka error + success banner
+  const [pageError, setPageError] = useState('');
+  const [pageSuccess, setPageSuccess] = useState('');
+
+  // 3-stage button actions
+  const addAction = useAsyncAction();
+  const rowAction = useKeyedAsyncAction();
 
   // Operator Assignments State (for display badges only)
   const [operatorAssignments, setOperatorAssignments] = useState<OperatorAssignmentItem[]>([]);
+  const [assignmentsLoaded, setAssignmentsLoaded] = useState(false);
 
   // Add Operator Form
   const [form, setForm] = useState({
@@ -129,6 +145,8 @@ export default function AdminOperators() {
       }
     } catch (e) {
       console.error('Failed to fetch assignments:', e);
+    } finally {
+      setAssignmentsLoaded(true);
     }
   }, []);
 
@@ -139,8 +157,13 @@ export default function AdminOperators() {
 
   const activeOperators = operators.filter(o => o.approvalStatus === 'approved');
   const pendingOperators = operators.filter(o => o.approvalStatus === 'pending');
+  // Rejected operators pehle kisi tab me nahi dikhte the — ab alag tab me, taaki re-approve ho sakein
+  const rejectedOperators = operators.filter(o => o.approvalStatus === 'rejected');
 
-  const filteredOperators = (activeTab === 'ACTIVE' ? activeOperators : pendingOperators).filter(o => {
+  const tabOperators =
+    activeTab === 'ACTIVE' ? activeOperators : activeTab === 'PENDING' ? pendingOperators : rejectedOperators;
+
+  const filteredOperators = tabOperators.filter(o => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return o.fullName.toLowerCase().includes(term) ||
@@ -149,78 +172,73 @@ export default function AdminOperators() {
       o.district?.toLowerCase().includes(term);
   });
 
-  const handleAddOperator = async (e: React.FormEvent) => {
+  const handleAddOperator = (e: React.FormEvent) => {
     e.preventDefault();
-    setFormLoading(true);
-    setFormError('');
-    setFormSuccess('');
+    addAction.run(async () => {
+      setFormError('');
+      setFormSuccess('');
 
-    try {
-      const response = await apiClient.post('/users', {
-        ...form,
-        role: 'operator'
-      });
-      if (response.data.status === 'success') {
+      try {
+        const response = await apiClient.post('/users', {
+          ...form,
+          role: 'operator'
+        });
+        if (response.data.status !== 'success') {
+          throw new Error(response.data.message || 'Failed to add operator.');
+        }
         setFormSuccess(response.data.message);
         setForm({ fullName: '', mobile: '', aadhaar: '', district: '', officeName: '', wardNo: '', address: '', email: '', password: '' });
         await fetchOperators();
         setTimeout(() => { setShowAddModal(false); setFormSuccess(''); }, 1500);
+      } catch (err) {
+        setFormError(apiErrorText(err, 'Failed to add operator.'));
+        throw err;
       }
-    } catch (err: any) {
-      setFormError(err.response?.data?.message || 'Failed to add operator.');
-    } finally {
-      setFormLoading(false);
-    }
+    });
   };
 
-  const handleApprove = async (operatorId: string) => {
-    setActionLoading(operatorId);
-    try {
-      await apiClient.patch(`/users/${operatorId}/approve`);
-      await fetchOperators();
-    } catch (e) {
-      console.error('Approve failed:', e);
-    } finally {
-      setActionLoading(null);
-    }
-  };
+  // Common row action runner — backend error user ko banner me dikhata hai (pehle sirf console.error tha)
+  const runRowAction = (
+    key: string,
+    request: () => Promise<{ data: { status?: string; message?: string } }>,
+    fallbackError: string,
+    successText: string
+  ) =>
+    rowAction.run(key, async () => {
+      setPageError('');
+      setPageSuccess('');
+      try {
+        const res = await request();
+        if (res.data?.status && res.data.status !== 'success') {
+          throw new Error(res.data.message || fallbackError);
+        }
+        setPageSuccess(res.data?.message || successText);
+        setTimeout(() => setPageSuccess(''), 3000);
+        await fetchOperators();
+      } catch (err) {
+        setPageError(apiErrorText(err, fallbackError));
+        setTimeout(() => setPageError(''), 6000);
+        throw err;
+      }
+    });
 
-  const handleReject = async (operatorId: string) => {
-    setActionLoading(operatorId);
-    try {
-      await apiClient.patch(`/users/${operatorId}/reject`);
-      await fetchOperators();
-    } catch (e) {
-      console.error('Reject failed:', e);
-    } finally {
-      setActionLoading(null);
-    }
-  };
+  const handleApprove = (operatorId: string) =>
+    runRowAction(`approve-${operatorId}`, () => apiClient.patch(`/users/${operatorId}/approve`), 'Operator approve nahi ho paya.', 'Operator approved successfully.');
 
-  const handleToggle = async (operatorId: string) => {
-    setActionLoading(operatorId);
-    try {
-      await apiClient.patch(`/users/${operatorId}/toggle`);
-      await fetchOperators();
-    } catch (e) {
-      console.error('Toggle failed:', e);
-    } finally {
-      setActionLoading(null);
-    }
-  };
+  const handleReject = (operatorId: string) =>
+    runRowAction(`reject-${operatorId}`, () => apiClient.patch(`/users/${operatorId}/reject`), 'Operator reject nahi ho paya.', 'Operator rejected.');
 
-  const handleRemove = async (operatorId: string) => {
+  const handleToggle = (operatorId: string) =>
+    runRowAction(`toggle-${operatorId}`, () => apiClient.patch(`/users/${operatorId}/toggle`), 'Operator status change nahi ho paya.', 'Operator status updated.');
+
+  const handleRemove = (operatorId: string) => {
     if (!confirm('Kya aap sure hain ki is operator ko permanently remove karna chahte hain?')) return;
-    setActionLoading(operatorId);
-    try {
-      await apiClient.delete(`/users/${operatorId}`);
-      await fetchOperators();
-    } catch (e) {
-      console.error('Remove failed:', e);
-    } finally {
-      setActionLoading(null);
-    }
+    runRowAction(`remove-${operatorId}`, () => apiClient.delete(`/users/${operatorId}`), 'Operator remove nahi ho paya.', 'Operator removed successfully.');
   };
+
+  // Kisi row ka koi bhi action chal raha ho to baaki buttons disable
+  const isRowBusy = (operatorId: string) =>
+    ['approve', 'reject', 'toggle', 'remove'].some(k => rowAction.stateOf(`${k}-${operatorId}`) === 'loading');
 
   return (
     <DashboardLayout>
@@ -277,7 +295,35 @@ export default function AdminOperators() {
               }`}>{pendingOperators.length}</span>
             )}
           </button>
+          <button
+            onClick={() => setActiveTab('REJECTED')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold transition-all ${
+              activeTab === 'REJECTED'
+                ? 'bg-red-600 text-white shadow-md'
+                : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Ban className="h-3.5 w-3.5" />
+            <span>Rejected</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+              activeTab === 'REJECTED' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+            }`}>{rejectedOperators.length}</span>
+          </button>
         </div>
+
+        {/* Row action error / success banner */}
+        {pageError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center gap-2 text-xs font-semibold">
+            <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+            <span>{pageError}</span>
+          </div>
+        )}
+        {pageSuccess && (
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-xl flex items-center gap-2 text-xs font-semibold">
+            <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+            <span>{pageSuccess}</span>
+          </div>
+        )}
 
         {/* Search Bar */}
         <div className="relative">
@@ -294,17 +340,16 @@ export default function AdminOperators() {
         {/* Operators Table */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
           {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-6 w-6 animate-spin text-teal-500" />
-              <span className="ml-2 text-sm text-slate-500">Loading operators...</span>
-            </div>
+            <SkeletonTable rows={5} cols={7} className="border-0 rounded-none" />
           ) : filteredOperators.length === 0 ? (
             <div className="text-center py-16">
               <UserCog className="h-10 w-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm text-slate-500">
                 {activeTab === 'PENDING'
                   ? 'No pending operator requests'
-                  : 'No operators found'}
+                  : activeTab === 'REJECTED'
+                    ? 'No rejected operators'
+                    : 'No operators found'}
               </p>
             </div>
           ) : (
@@ -336,7 +381,8 @@ export default function AdminOperators() {
                             <div className="font-mono text-[10px] font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200/60 inline-block">
                               {op.userCode}
                             </div>
-                            {(() => {
+                            {!assignmentsLoaded && <Skeleton className="h-3 w-24 mt-1" />}
+                            {assignmentsLoaded && (() => {
                               const opAssignments = operatorAssignments.filter(a => String(a.operatorId) === String(op.id));
                               if (opAssignments.length === 0) return null;
                               return (
@@ -405,6 +451,11 @@ export default function AdminOperators() {
                             <Clock className="h-3.5 w-3.5 text-amber-600" />
                             <span>Pending</span>
                           </span>
+                        ) : activeTab === 'REJECTED' ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-red-700 bg-red-50 px-2.5 py-0.5 rounded-full border border-red-200">
+                            <Ban className="h-3.5 w-3.5 text-red-600" />
+                            <span>Rejected</span>
+                          </span>
                         ) : op.isActive ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
                             <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
@@ -433,31 +484,60 @@ export default function AdminOperators() {
 
 
 
-                          {actionLoading === op.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                          ) : activeTab === 'PENDING' ? (
+                          {activeTab === 'PENDING' || activeTab === 'REJECTED' ? (
                             <>
-                              <button
+                              <ActionButton
+                                state={rowAction.stateOf(`approve-${op.id}`)}
                                 onClick={() => handleApprove(op.id)}
+                                disabled={isRowBusy(op.id)}
+                                loadingText="Approving..."
+                                successText="Approved"
+                                errorText="Failed"
                                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-all cursor-pointer shadow-2xs"
-                                title="Approve Operator"
+                                title={activeTab === 'REJECTED' ? 'Re-approve Operator' : 'Approve Operator'}
                               >
                                 <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
-                                <span>Approve</span>
-                              </button>
-                              <button
-                                onClick={() => handleReject(op.id)}
-                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition-all cursor-pointer shadow-2xs"
-                                title="Reject Operator"
-                              >
-                                <XCircle className="h-3.5 w-3.5 text-red-600" />
-                                <span>Reject</span>
-                              </button>
+                                <span>{activeTab === 'REJECTED' ? 'Re-approve' : 'Approve'}</span>
+                              </ActionButton>
+                              {activeTab === 'PENDING' ? (
+                                <ActionButton
+                                  state={rowAction.stateOf(`reject-${op.id}`)}
+                                  onClick={() => handleReject(op.id)}
+                                  disabled={isRowBusy(op.id)}
+                                  loadingText="Rejecting..."
+                                  successText="Rejected"
+                                  errorText="Failed"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition-all cursor-pointer shadow-2xs"
+                                  title="Reject Operator"
+                                >
+                                  <XCircle className="h-3.5 w-3.5 text-red-600" />
+                                  <span>Reject</span>
+                                </ActionButton>
+                              ) : (
+                                <ActionButton
+                                  state={rowAction.stateOf(`remove-${op.id}`)}
+                                  onClick={() => handleRemove(op.id)}
+                                  disabled={isRowBusy(op.id)}
+                                  loadingText="Removing..."
+                                  successText="Removed"
+                                  errorText="Failed"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-50 text-slate-600 hover:bg-red-50 hover:text-red-700 border border-slate-200 hover:border-red-200 transition-all cursor-pointer shadow-2xs"
+                                  title="Remove Operator"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span>Remove</span>
+                                </ActionButton>
+                              )}
                             </>
                           ) : (
                             <>
-                              <button
+                              <ActionButton
+                                state={rowAction.stateOf(`toggle-${op.id}`)}
                                 onClick={() => handleToggle(op.id)}
+                                disabled={isRowBusy(op.id)}
+                                loadingText="Updating..."
+                                successText="Updated"
+                                errorText="Failed"
                                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer shadow-2xs ${
                                   op.isActive
                                     ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
@@ -467,15 +547,20 @@ export default function AdminOperators() {
                               >
                                 {op.isActive ? <EyeOff className="h-3.5 w-3.5 text-amber-600" /> : <Eye className="h-3.5 w-3.5 text-emerald-600" />}
                                 <span>{op.isActive ? 'Deactivate' : 'Activate'}</span>
-                              </button>
-                              <button
+                              </ActionButton>
+                              <ActionButton
+                                state={rowAction.stateOf(`remove-${op.id}`)}
                                 onClick={() => handleRemove(op.id)}
+                                disabled={isRowBusy(op.id)}
+                                loadingText="Removing..."
+                                successText="Removed"
+                                errorText="Failed"
                                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-50 text-slate-600 hover:bg-red-50 hover:text-red-700 border border-slate-200 hover:border-red-200 transition-all cursor-pointer shadow-2xs"
                                 title="Remove Operator"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                                 <span>Remove</span>
-                              </button>
+                              </ActionButton>
                             </>
                           )}
                         </div>
@@ -620,17 +705,16 @@ export default function AdminOperators() {
                 </div>
               </div>
 
-              <button
+              <ActionButton
                 type="submit"
-                disabled={formLoading}
+                state={addAction.state}
+                loadingText="Adding Operator..."
+                successText="Operator Added!"
+                errorText="Failed"
                 className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-700 hover:to-cyan-700 text-white text-xs font-bold py-3 rounded-xl shadow-lg transition-all disabled:opacity-50"
               >
-                {formLoading ? (
-                  <><Loader2 className="h-4 w-4 animate-spin" /> Adding Operator...</>
-                ) : (
-                  <><UserPlus className="h-4 w-4" /> Add Operator</>
-                )}
-              </button>
+                <UserPlus className="h-4 w-4" /> Add Operator
+              </ActionButton>
             </form>
           </div>
         </div>
