@@ -552,3 +552,26 @@
    - Frontend `tsc -b` + `vite build` 0 errors (1992 modules), oxlint 0 errors (warnings 18 → 15). Backend sab files syntax + import pass. Fake-DB HTTP harness 79/79 pass (withdrawal 2-tier, price scope, roles, payouts, OTP).
 4. **Kya koi aur optimize tareeka hai (Optimization & Alternatives):**
    - Pending: Cashfree webhook recharge (user ne abhi rakhne ko kaha), distributor commission split (`distributor_share` business rule decide karna hai), server-side pagination, route-level code splitting (bundle 850KB+), real browser E2E test with MySQL.
+
+---
+
+### 🗓️ 2026-10-23 19:15 - Local MySQL Database Setup (`v2online_portal`), Schema Migration & Test Accounts Seed
+1. **Kya kiya (What was done):**
+   - **Backend Environment Configuration (`backend/.env`)**: Cloud DB (Aiven) ko switch karke local MySQL XAMPP/phpMyAdmin database `v2online_portal` se connect kiya (`DB_HOST=localhost`, `DB_PORT=3306`, `DB_USER=root`, `DB_PASSWORD=`, `DB_NAME=v2online_portal`, `DB_SSL=false`).
+   - **Frontend Environment Configuration (`frontend/.env`)**: API URL ko local backend `http://localhost:5000/api` par point kiya taaki testing ke time requests local server aur local database par jayein.
+   - **Schema & Migration Updates (`backend/src/db/schema.sql` & `migrate.js`)**:
+     - `schema.sql`: Missing columns (`services`: `icon_url`, `has_sub_services`, `fee`, `admin_commission_percentage`, `form_schema`, `required_docs`, `operator_assignment_mode`; `sub_services`: `icon_url`, `fee`, `admin_commission_percentage`, `operator_assignment_mode`; `operator_assignments`: `area_label`, `custom_fee`; `system_settings` table) ko directly add kiya.
+     - `migrate.js`: `CREATE DATABASE IF NOT EXISTS` aur `USE \`${dbName}\`` add kiya taaki migration bina database selection error ke smoothly run ho.
+     - `backend/src/config/db.js`: `initDb` me connection creation ko fallback resilient banaya agar DB na ho to pehle create kare.
+   - **Migration & Seeding Execution**:
+     - All 15 relational tables successfully create kiye: `users`, `wallets`, `shops`, `service_categories`, `services`, `sub_services`, `operator_assignments`, `applications`, `application_documents`, `transactions`, `withdrawal_requests`, `complaints`, `user_requests`, `operator_price_requests`, `system_settings`.
+     - Super Admin accounts (`9999900001` & `9999999999`) seed kiye with password `Admin@123`.
+     - Complete test dataset seed kiya: Manager (`9999900002`), Distributor (`9999900003`), Agent (`9999900004` with Shop & ₹2500 wallet), 3 Operators (`9999900005`, `9999900006`, `9999900007`), Services (Aadhaar & PAN Services with dynamic forms & area mappings). All passwords: `Admin@123`.
+2. **Kyu kiya (Why it was done):**
+   - User ko aaj application test karni hai apne local XAMPP/phpMyAdmin MySQL database `v2online_portal` par, aur Admin login test account required tha.
+3. **Is se hua kya (Impact / Result):**
+   - Database `v2online_portal` ke andar saari 15 tables perfectly create ho chuki hain.
+   - Backend successfully starts, connects to `v2online_portal`, aur `/api/health` aur `/api/auth/login` (Admin: `9999900001` / `Admin@123`) 200 OK return karte hain.
+4. **Kya koi aur optimize tareeka hai (Optimization & Alternatives):**
+   - User direct `npm run dev` se backend aur frontend run karke test kar sakta hai. Saare panels (Admin, Manager, Distributor, Agent, Operator) ke credentials ready hain.
+

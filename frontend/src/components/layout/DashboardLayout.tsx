@@ -18,7 +18,6 @@ import {
   Layers,
   Users,
   UserCog,
-  Settings,
   Percent,
   FileCheck,
   X
@@ -104,8 +103,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     if (user?.role === 'distributor') {
       return [
         { name: 'Dashboard', icon: Home, path: '/distributor/dashboard', color: 'text-blue-600' },
-        { name: 'Shop List', icon: Store, path: '/distributor/shop-list', color: 'text-blue-500' },
-        { name: 'Verify Shops', icon: UserCheck, path: '/distributor/verify-shops', color: 'text-amber-600' },
+        { name: 'Shop Management', icon: UserCheck, path: '/distributor/verify-shops', color: 'text-amber-600' },
         { name: 'Delete Shop Requests', icon: UserX, path: '/distributor/delete-shop-requests', color: 'text-red-500' },
         { name: 'Complaint', icon: Headphones, path: '/distributor/complaint', color: 'text-red-600' },
         { name: 'My Profile', icon: User, path: '/distributor/profile', color: 'text-purple-600' }
@@ -155,8 +153,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         { name: 'Operator Withdrawal Request', icon: Wallet, path: `${basePath}/withdrawal-requests`, color: 'text-teal-600' },
         { name: 'Wallet Management', icon: Wallet, path: `${basePath}/wallet`, color: 'text-emerald-600' },
         { name: 'Complaint', icon: Headphones, path: `${basePath}/complaints`, color: 'text-red-600' },
-        { name: 'My Profile', icon: User, path: `${basePath}/profile`, color: 'text-purple-600' },
-        { name: 'Settings', icon: Settings, path: `${basePath}/settings`, color: 'text-slate-600' }
+        { name: 'My Profile', icon: User, path: `${basePath}/profile`, color: 'text-purple-600' }
       ];
     }
 

@@ -24,7 +24,6 @@ import OperatorWallet from './pages/operator/OperatorWallet';
 
 // Distributor Pages
 import DistributorDashboard from './pages/distributor/DistributorDashboard';
-import ShopList from './pages/distributor/ShopList';
 import ShopDeleteRequest from './pages/distributor/ShopDeleteRequest';
 import ShopVerify from './pages/distributor/ShopVerify';
 import DistributorProfile from './pages/distributor/DistributorProfile';
@@ -42,7 +41,7 @@ import AdminCommissions from './pages/admin/AdminCommissions';
 import AdminWallet from './pages/admin/AdminWallet';
 import AdminUsers from './pages/admin/AdminUsers';
 import AdminOperators from './pages/admin/AdminOperators';
-import AdminSettings from './pages/admin/AdminSettings';
+// AdminSettings page removed — System Support settings moved to UserProfile
 import AdminWithdrawalRequests from './pages/admin/AdminWithdrawalRequests';
 import ManagerWithdrawalRequests from './pages/manager/ManagerWithdrawalRequests';
 import AdminTaskVerification from './pages/admin/AdminTaskVerification';
@@ -186,7 +185,7 @@ export const App: React.FC = () => {
             path="/distributor/shop-list"
             element={
               <ProtectedRoute allowedRoles={['distributor']}>
-                <ShopList />
+                <Navigate to="/distributor/verify-shops" replace />
               </ProtectedRoute>
             }
           />
@@ -362,14 +361,7 @@ export const App: React.FC = () => {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/admin/settings"
-            element={
-              <ProtectedRoute allowedRoles={['super_admin', 'sub_admin', 'manager']}>
-                <AdminSettings />
-              </ProtectedRoute>
-            }
-          />
+          {/* Settings page removed — merged into Profile */}
           <Route
             path="/admin/profile"
             element={

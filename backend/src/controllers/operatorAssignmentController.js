@@ -138,7 +138,19 @@ export const createAssignment = async (req, res) => {
     let serviceName = '';
     let routingMode = 'single';
 
-    if (serviceId) {
+    if (subServiceId && subServiceId !== 'all') {
+      const [subRows] = await pool.query(
+        `SELECT ss.id, ss.name, ss.service_id, s.name as service_name, s.operator_assignment_mode 
+         FROM sub_services ss JOIN services s ON ss.service_id = s.id WHERE ss.id = ?`,
+        [subServiceId]
+      );
+      if (subRows.length === 0) {
+        return res.status(404).json({ status: 'error', message: 'Sub-Service not found.' });
+      }
+      serviceName = `${subRows[0].service_name} (${subRows[0].name})`;
+      routingMode = subRows[0].operator_assignment_mode || 'single';
+      targetSubServices = [{ id: subRows[0].id, name: subRows[0].name }];
+    } else if (serviceId) {
       const [sRows] = await pool.query('SELECT id, name, operator_assignment_mode FROM services WHERE id = ?', [serviceId]);
       if (sRows.length === 0) {
         return res.status(404).json({ status: 'error', message: 'Service not found.' });
@@ -173,18 +185,6 @@ export const createAssignment = async (req, res) => {
         }
       }
       targetSubServices = subRows;
-    } else if (subServiceId) {
-      const [subRows] = await pool.query(
-        `SELECT ss.id, ss.name, ss.service_id, s.name as service_name, s.operator_assignment_mode 
-         FROM sub_services ss JOIN services s ON ss.service_id = s.id WHERE ss.id = ?`,
-        [subServiceId]
-      );
-      if (subRows.length === 0) {
-        return res.status(404).json({ status: 'error', message: 'Sub-Service not found.' });
-      }
-      serviceName = subRows[0].service_name;
-      routingMode = subRows[0].operator_assignment_mode || 'single';
-      targetSubServices = [{ id: subRows[0].id, name: subRows[0].name }];
     } else {
       return res.status(400).json({ status: 'error', message: 'Service or Sub-Service ID is required.' });
     }
@@ -268,7 +268,11 @@ export const createAssignment = async (req, res) => {
 export const deleteAssignment = async (req, res) => {
   try {
     const { id } = req.params;
-    await pool.query('DELETE FROM operator_assignments WHERE id = ?', [id]);
+    const ids = String(id).split(',').map(x => x.trim()).filter(Boolean);
+    if (ids.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'Assignment ID is required.' });
+    }
+    await pool.query('DELETE FROM operator_assignments WHERE id IN (?)', [ids]);
     return res.status(200).json({ status: 'success', message: 'Assignment removed successfully.' });
   } catch (error) {
     console.error('Delete Assignment Error:', error);

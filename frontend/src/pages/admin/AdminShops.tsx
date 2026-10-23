@@ -317,6 +317,14 @@ export default function AdminShops() {
                       <td className="py-3.5 px-4">
                         <span className="font-mono font-bold text-blue-700 text-xs block">{shop.shopCode}</span>
                         <span className="font-bold text-slate-900 text-sm">{shop.shopName}</span>
+                        {shop.distributorName && (
+                          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-purple-700 text-[10px] font-semibold">
+                              <span>Distributor: {shop.distributorName}</span>
+                              {shop.distributorMobile && <span className="font-mono">({shop.distributorMobile})</span>}
+                            </span>
+                          </div>
+                        )}
                         {shop.deleteReason && (
                           <div className="mt-1 p-2 bg-red-50 border border-red-200 rounded-lg text-red-800 text-[11px]">
                             <strong>Reason:</strong> {shop.deleteReason}
@@ -452,8 +460,8 @@ export default function AdminShops() {
 
         {/* Add New Shop Modal */}
         {isAddModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 border border-slate-200 relative animate-in fade-in zoom-in-95 my-auto max-h-[90vh] overflow-y-auto">
               
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2 text-slate-800 font-bold text-base">
@@ -505,7 +513,7 @@ export default function AdminShops() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                       Mobile Number *
@@ -535,7 +543,7 @@ export default function AdminShops() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                       Email Address

@@ -3,12 +3,10 @@ import crypto from 'crypto';
 import pool from '../config/db.js';
 import { sendUserApprovalEmail } from '../utils/mailer.js';
 
-// Distributor sirf apne network ke ya unassigned (self-registered) agents par action le sakta hai
+// Security Multi-Tenant: Distributor sirf apne register kiye hue agents par action le sakta hai
 const isOutsideDistributorScope = (req, target) =>
   req.user?.role === 'distributor' &&
-  target.distributor_id !== null &&
-  target.distributor_id !== undefined &&
-  Number(target.distributor_id) !== Number(req.user.id);
+  (!target.distributor_id || Number(target.distributor_id) !== Number(req.user.id));
 
 /**
  * 1. Get All Shops with Status Filters
@@ -23,18 +21,22 @@ export const getShops = async (req, res) => {
              COALESCE(s.shop_name, u.shop_name) as shopName,
              u.mobile, u.email, u.aadhaar_number as aadhaar, u.address,
              u.approval_status, u.is_active, u.created_at as createdAt,
+             u.distributor_id as distributorId,
+             d.full_name as distributorName,
+             d.mobile as distributorMobile,
              ur.reason as deleteReason, ur.status as deleteRequestStatus
       FROM users u
       LEFT JOIN shops s ON u.id = s.user_id
+      LEFT JOIN users d ON u.distributor_id = d.id
       LEFT JOIN user_requests ur ON u.id = ur.target_user_id AND ur.status = 'pending' AND ur.request_type = 'delete_agent'
       WHERE u.role = 'agent'
     `;
 
     const params = [];
 
-    // Distributor sirf apne network ke agents (+ purane / self-registered unassigned agents) dekhta hai
+    // Security: Distributor sirf aur sirf apne dwara add kiye gaye shops hi dekhega
     if (req.user?.role === 'distributor') {
-      query += ' AND (u.distributor_id = ? OR u.distributor_id IS NULL)';
+      query += ' AND u.distributor_id = ?';
       params.push(req.user.id);
     }
 
@@ -64,6 +66,9 @@ export const getShops = async (req, res) => {
       email: r.email || 'N/A',
       aadhaar: r.aadhaar || 'N/A',
       address: r.address || 'N/A',
+      distributorId: r.distributorId ? r.distributorId.toString() : null,
+      distributorName: r.distributorName || null,
+      distributorMobile: r.distributorMobile || null,
       status: r.deleteRequestStatus === 'pending'
         ? 'DELETE_REQUESTED'
         : r.approval_status === 'pending'
@@ -116,7 +121,12 @@ export const addShop = async (req, res) => {
     const uuid = crypto.randomUUID();
     const passwordHash = await bcrypt.hash(password, 10);
     // Distributor dwara banaya agent usi distributor ke network me link hoga
-    const distributorId = req.user?.role === 'distributor' ? req.user.id : null;
+    const isDistributor = req.user?.role === 'distributor';
+    const distributorId = isDistributor ? req.user.id : null;
+    // Distributor dwara add ki gayi shop PENDING rahegi, Admin verify karke approve karega
+    const approvalStatus = isDistributor ? 'pending' : 'approved';
+    const isActive = isDistributor ? false : true;
+    const shopTableStatus = isDistributor ? 'pending' : 'active';
 
     await connection.beginTransaction();
 
@@ -125,8 +135,8 @@ export const addShop = async (req, res) => {
       `INSERT INTO users (
         uuid, role, full_name, mobile, email, password_hash, shop_name,
         aadhaar_number, address, distributor_id, approval_status, is_active
-      ) VALUES (?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, 'approved', true)`,
-      [uuid, ownerName, mobile.trim(), email || null, passwordHash, shopName, aadhaar || null, address, distributorId]
+      ) VALUES (?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [uuid, ownerName, mobile.trim(), email || null, passwordHash, shopName, aadhaar || null, address, distributorId, approvalStatus, isActive]
     );
 
     const newUserId = userRes.insertId;
@@ -138,8 +148,8 @@ export const addShop = async (req, res) => {
       `INSERT INTO shops (
         shop_id_code, user_id, owner_name, shop_name, mobile, email,
         aadhaar_number, full_address, distributor_id, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [shopCode, newUserId, ownerName, shopName, mobile.trim(), email || null, aadhaar || null, address, distributorId]
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [shopCode, newUserId, ownerName, shopName, mobile.trim(), email || null, aadhaar || null, address, distributorId, shopTableStatus]
     );
 
     // 3. Create wallet
@@ -149,14 +159,16 @@ export const addShop = async (req, res) => {
 
     return res.status(201).json({
       status: 'success',
-      message: 'Shop created & activated successfully! Shop user can now log in.',
+      message: isDistributor
+        ? `Shop registration request for "${shopName}" submitted successfully! Sent to Admin for verification and approval.`
+        : 'Shop created & activated successfully! Shop user can now log in.',
       data: {
         id: newUserId.toString(),
         shopCode,
         ownerName,
         shopName,
         mobile,
-        status: 'ACTIVE'
+        status: isDistributor ? 'PENDING' : 'ACTIVE'
       }
     });
   } catch (error) {

@@ -86,6 +86,7 @@ export default function AdminUsers() {
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
   const [pageError, setPageError] = useState('');
+  const [pageSuccess, setPageSuccess] = useState('');
   const createAction = useAsyncAction();
   const toggleAction = useKeyedAsyncAction();
 
@@ -142,10 +143,14 @@ export default function AdminUsers() {
         setFormError(getApiErrorMessage(err, 'Failed to create user.'));
         throw err;
       }
-      setFormSuccess(message);
+
+      // Close dialog immediately without delay
+      setShowAddModal(false);
+      setFormSuccess('');
+      setPageSuccess(message || 'User created successfully!');
       setForm({ fullName: '', mobile: '', email: '', password: '', role: 'distributor', aadhaar: '', district: '', address: '', officeName: '' });
+      setTimeout(() => setPageSuccess(''), 4000);
       await fetchUsers();
-      setTimeout(() => { setShowAddModal(false); setFormSuccess(''); }, 1500);
     });
   };
 
@@ -213,6 +218,16 @@ export default function AdminUsers() {
             </button>
           ))}
         </div>
+
+        {pageSuccess && (
+          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold px-3 py-2.5 rounded-xl">
+            <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
+            <span>{pageSuccess}</span>
+            <button onClick={() => setPageSuccess('')} className="ml-auto p-0.5 hover:bg-emerald-100 rounded">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {pageError && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold px-3 py-2.5 rounded-xl">
@@ -404,7 +419,7 @@ export default function AdminUsers() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Full Name *</label>
                   <input
@@ -430,7 +445,7 @@ export default function AdminUsers() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Email</label>
                   <input
@@ -455,7 +470,7 @@ export default function AdminUsers() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">District</label>
                   <input

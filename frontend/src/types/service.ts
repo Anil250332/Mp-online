@@ -59,7 +59,7 @@ export interface ServiceItem {
   id: string;
   name: string;
   code: string;
-  category: string;
+  category?: string;
   iconUrl?: string;
   iconName?: string;
   description: string;

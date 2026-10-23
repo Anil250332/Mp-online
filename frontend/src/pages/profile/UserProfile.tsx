@@ -14,15 +14,20 @@ import {
   AlertCircle,
   ShieldCheck,
   Building2,
-  Headphones
+  Headphones,
+  Save
 } from 'lucide-react';
 import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { ActionButton } from '../../components/ui/ActionButton';
 import { Skeleton } from '../../components/ui/Skeleton';
+import { getApiErrorMessage } from '../../store/apiError';
 
 export default function UserProfile() {
   const { user, isLoading: authLoading } = useAuth();
   const profileLoading = authLoading || !user;
+
+  // Is user an admin or manager? (can edit support settings)
+  const isAdmin = user?.role === 'super_admin' || user?.role === 'sub_admin' || user?.role === 'manager';
 
   // Password Form State
   const [currentPassword, setCurrentPassword] = useState('');
@@ -39,15 +44,23 @@ export default function UserProfile() {
     supportEmail: 'support@mponline.gov.in'
   });
 
+  // Editable support fields (for admin)
+  const [editHelpline, setEditHelpline] = useState('');
+  const [editSupportEmail, setEditSupportEmail] = useState('');
+  const contactAction = useAsyncAction();
+  const [contactSuccess, setContactSuccess] = useState('');
+  const [contactError, setContactError] = useState('');
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
         const response = await apiClient.get('/settings');
         if (response.data.status === 'success') {
-          setSupportInfo({
-            helplineNumber: response.data.data.helplineNumber || '+91 0755 2700800',
-            supportEmail: response.data.data.supportEmail || 'support@mponline.gov.in'
-          });
+          const hn = response.data.data.helplineNumber || '+91 0755 2700800';
+          const se = response.data.data.supportEmail || 'support@mponline.gov.in';
+          setSupportInfo({ helplineNumber: hn, supportEmail: se });
+          setEditHelpline(hn);
+          setEditSupportEmail(se);
         }
       } catch (e) {
         console.error('Failed to fetch support settings:', e);
@@ -99,6 +112,35 @@ export default function UserProfile() {
         setErrorMsg(err.response?.data?.message || err.message || 'Password update karne me samasya aayi. Kripya punah prayas karein.');
         return false;
       }
+    });
+  };
+
+  // Admin: Save system support settings handler
+  const handleContactSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setContactError('');
+    setContactSuccess('');
+
+    if (!editHelpline.trim() || !editSupportEmail.trim()) {
+      setContactError('Helpline Number aur Support Email dono bharna zaroori hai.');
+      return;
+    }
+
+    contactAction.run(async () => {
+      try {
+        const response = await apiClient.put('/settings', {
+          helplineNumber: editHelpline.trim(),
+          supportEmail: editSupportEmail.trim()
+        });
+        if (response.data.status !== 'success') throw new Error(response.data.message || 'Settings update nahi ho payi.');
+      } catch (err) {
+        setContactError(getApiErrorMessage(err, 'Settings update nahi ho payi.'));
+        throw err;
+      }
+      // Update local display too
+      setSupportInfo({ helplineNumber: editHelpline.trim(), supportEmail: editSupportEmail.trim() });
+      setContactSuccess('Helpline Number aur Support Email successfully update ho gaye hain! Ab ye sabhi profile pages me dynamic dikhenge.');
+      setTimeout(() => setContactSuccess(''), 4000);
     });
   };
 
@@ -245,31 +287,122 @@ export default function UserProfile() {
               )}
             </div>
 
-            {/* 2. Official Helpdesk & Support Card */}
-            <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 rounded-2xl border border-blue-200/80 p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold shadow-xs">
-                  <Headphones className="h-5 w-5" />
+            {/* 2. System Support & Helpline Contacts — Editable for Admin/Manager, Read-Only for others */}
+            {isAdmin ? (
+              /* ── ADMIN EDITABLE CARD ── */
+              <div className="bg-white rounded-2xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4">
+                <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-slate-900 font-bold text-base">
+                  <Phone className="h-5 w-5 text-emerald-600" />
+                  <span>System Support & Helpline Contacts</span>
                 </div>
-                <div>
-                  <h3 className="text-xs font-bold text-slate-800">Official Portal Support Desk</h3>
-                  <p className="text-[11px] text-slate-600">Contact admin team for KYC or authorization updates</p>
-                </div>
-              </div>
-              <div className="text-left sm:text-right">
+
+                <p className="text-xs text-slate-500">
+                  Yaha jo Helpline Number aur Support Email daalenge, bo Shop, Operator, aur Distributor panels ke profile pages me dynamic dikhenge.
+                </p>
+
+                {contactSuccess && (
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span>{contactSuccess}</span>
+                  </div>
+                )}
+
+                {contactError && (
+                  <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                    <span>{contactError}</span>
+                  </div>
+                )}
+
                 {supportLoading ? (
-                  <div className="space-y-1.5 sm:flex sm:flex-col sm:items-end">
-                    <Skeleton className="h-3 w-32" />
-                    <Skeleton className="h-3 w-40" />
+                  <div className="space-y-4" aria-busy="true">
+                    {[0, 1].map(i => (
+                      <div key={i} className="space-y-1.5">
+                        <Skeleton className="h-3 w-40" />
+                        <Skeleton className="h-10 w-full rounded-xl" />
+                      </div>
+                    ))}
+                    <Skeleton className="h-10 w-full rounded-xl mt-2" />
                   </div>
                 ) : (
-                  <>
-                    <span className="text-xs font-bold text-blue-700 block">{supportInfo.helplineNumber}</span>
-                    <span className="text-[11px] text-slate-500 block">{supportInfo.supportEmail}</span>
-                  </>
+                <form onSubmit={handleContactSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Helpline Mobile / Phone Number *
+                    </label>
+                    <div className="relative">
+                      <Phone className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="+91 0755 2700800"
+                        value={editHelpline}
+                        onChange={(e) => setEditHelpline(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Support Email Address *
+                    </label>
+                    <div className="relative">
+                      <Mail className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                      <input
+                        type="email"
+                        placeholder="support@mponline.gov.in"
+                        value={editSupportEmail}
+                        onChange={(e) => setEditSupportEmail(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <ActionButton
+                      type="submit"
+                      state={contactAction.state}
+                      loadingText="Saving..."
+                      successText="Settings Saved!"
+                      errorText="Save Failed"
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <Save className="h-4 w-4" />
+                      <span>Save System Support Settings</span>
+                    </ActionButton>
+                  </div>
+                </form>
                 )}
               </div>
-            </div>
+            ) : (
+              /* ── READ-ONLY SUPPORT INFO CARD (for non-admin roles) ── */
+              <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 rounded-2xl border border-blue-200/80 p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold shadow-xs">
+                    <Headphones className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-800">System Support & Helpline Contacts</h3>
+                    <p className="text-[11px] text-slate-600">Contact admin team for KYC or authorization updates</p>
+                  </div>
+                </div>
+                <div className="text-left sm:text-right">
+                  {supportLoading ? (
+                    <div className="space-y-1.5 sm:flex sm:flex-col sm:items-end">
+                      <Skeleton className="h-3 w-32" />
+                      <Skeleton className="h-3 w-40" />
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-xs font-bold text-blue-700 block">{supportInfo.helplineNumber}</span>
+                      <span className="text-[11px] text-slate-500 block">{supportInfo.supportEmail}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
 
           </div>
 

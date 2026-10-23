@@ -58,12 +58,11 @@ export default function AgentWallet() {
     recharge.run(async () => {
       const result = await dispatch(rechargeWallet({ amount: amt, remarks: 'Wallet Auto UPI Topup' }));
       if (rechargeWallet.fulfilled.match(result)) {
+        // Close dialog immediately without delay
+        setIsModalOpen(false);
         setSuccessMsg(result.payload);
         setCustomAmount('');
-        setTimeout(() => {
-          setIsModalOpen(false);
-          setSuccessMsg('');
-        }, 2000);
+        setTimeout(() => setSuccessMsg(''), 5000);
         return true;
       }
       setErrorMsg(result.payload || 'Recharge request failed.');

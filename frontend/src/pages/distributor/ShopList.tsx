@@ -84,6 +84,8 @@ export default function ShopList() {
         throw err;
       }
 
+      // Close dialog immediately without delay
+      setIsAddModalOpen(false);
       setSuccessMsg(`Shop "${created.shopName}" added successfully! The owner can now log in at /login using Mobile: ${created.mobile}`);
       setFormData({
         ownerName: '',
@@ -94,11 +96,7 @@ export default function ShopList() {
         address: '',
         password: ''
       });
-
-      setTimeout(() => {
-        setIsAddModalOpen(false);
-        setSuccessMsg('');
-      }, 2500);
+      setTimeout(() => setSuccessMsg(''), 5000);
     });
   };
 
@@ -138,7 +136,7 @@ export default function ShopList() {
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2"
           >
             <UserPlus className="h-4 w-4" />
-            <span>+ Add New Shop</span>
+            <span>Add New Shop</span>
           </button>
         </div>
 
@@ -323,7 +321,7 @@ export default function ShopList() {
                   {/* WhatsApp Mobile */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      WhatsApp Mobile *
+                      Mobile *
                     </label>
                     <div className="relative">
                       <Phone className="h-4 w-4 absolute left-3 top-3 text-slate-400" />

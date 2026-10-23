@@ -16,6 +16,9 @@ export interface Shop {
   status: 'ACTIVE' | 'PENDING' | 'INACTIVE' | 'DELETE_REQUESTED';
   deleteReason?: string;
   registrationType: 'SELF_REGISTER' | 'DISTRIBUTOR_ADDED';
+  distributorId?: string | null;
+  distributorName?: string | null;
+  distributorMobile?: string | null;
   createdAt: string;
   requestedAt?: string;
   approvedAt?: string;

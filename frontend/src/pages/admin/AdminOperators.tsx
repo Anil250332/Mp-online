@@ -186,10 +186,14 @@ export default function AdminOperators() {
         if (response.data.status !== 'success') {
           throw new Error(response.data.message || 'Failed to add operator.');
         }
-        setFormSuccess(response.data.message);
+
+        // Close dialog immediately without delay
+        setShowAddModal(false);
+        setFormSuccess('');
+        setPageSuccess(response.data.message || 'Operator added successfully!');
         setForm({ fullName: '', mobile: '', aadhaar: '', district: '', officeName: '', wardNo: '', address: '', email: '', password: '' });
+        setTimeout(() => setPageSuccess(''), 3000);
         await fetchOperators();
-        setTimeout(() => { setShowAddModal(false); setFormSuccess(''); }, 1500);
       } catch (err) {
         setFormError(apiErrorText(err, 'Failed to add operator.'));
         throw err;
@@ -722,8 +726,8 @@ export default function AdminOperators() {
 
       {/* View Operator Details Modal */}
       {selectedViewOperator && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 relative animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 relative animate-in zoom-in-95 my-auto max-h-[92vh] flex flex-col">
             
             {/* Modal Header Banner */}
             <div className="bg-gradient-to-r from-teal-700 via-teal-800 to-cyan-900 text-white p-6 relative">

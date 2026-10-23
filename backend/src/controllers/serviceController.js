@@ -59,10 +59,8 @@ export const getServices = async (req, res) => {
         s.display_order as displayOrder, 
         s.is_active as isActive, 
         s.created_at as createdAt,
-        s.operator_assignment_mode as operatorAssignmentMode,
-        c.name as categoryName
+        s.operator_assignment_mode as operatorAssignmentMode
       FROM services s
-      LEFT JOIN service_categories c ON s.category_id = c.id
       ORDER BY s.display_order ASC, s.id DESC
     `);
 
@@ -157,10 +155,8 @@ export const getServiceById = async (req, res) => {
         s.admin_commission_percentage as adminCommissionPercent,
         s.form_schema as formSchema,
         s.is_active as isActive, 
-        s.created_at as createdAt,
-        c.name as categoryName
+        s.created_at as createdAt
       FROM services s
-      LEFT JOIN service_categories c ON s.category_id = c.id
       WHERE s.id = ?
     `, [id]);
 
@@ -258,25 +254,12 @@ export const addService = async (req, res) => {
     const parsedComm = hasSubServices ? 0 : parseFloat(adminCommissionPercent || 0);
     const formSchemaJson = !hasSubServices && Array.isArray(formFields) ? JSON.stringify(formFields) : JSON.stringify([]);
 
-    // Category check / insert
-    let categoryId = 1;
-    if (category && category.trim()) {
-      const [catRows] = await connection.query('SELECT id FROM service_categories WHERE name = ? LIMIT 1', [category.trim()]);
-      if (catRows.length > 0) {
-        categoryId = catRows[0].id;
-      } else {
-        const [catIns] = await connection.query('INSERT INTO service_categories (name, icon, is_active) VALUES (?, ?, true)', [category.trim(), 'Layers']);
-        categoryId = catIns.insertId;
-      }
-    }
-
     // Insert Service with temporary code
     const [result] = await connection.query(
       `INSERT INTO services (
-        category_id, name, code, description, icon_url, has_sub_services, fee, admin_commission_percentage, form_schema, operator_assignment_mode, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true)`,
+        name, code, description, icon_url, has_sub_services, fee, admin_commission_percentage, form_schema, operator_assignment_mode, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true)`,
       [
-        categoryId,
         name.trim(),
         'TEMP',
         description || '',

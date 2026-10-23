@@ -41,7 +41,8 @@ import {
   MapPin,
   Loader2,
   Link2,
-  XCircle
+  XCircle,
+  ChevronDown
 } from 'lucide-react';
 
 // Unique ID helpers — component ke bahar rakhe hain taaki render ke dauraan impure call (Date.now / Math.random) na ho.
@@ -106,11 +107,30 @@ export default function AdminServices() {
   const [allOperators, setAllOperators] = useState<{ id: string; fullName: string; userCode: string; mobile: string }[]>([]);
   const [allAssignments, setAllAssignments] = useState<any[]>([]);
   const [assignSelectedServiceId, setAssignSelectedServiceId] = useState('');
+  const [assignSelectedSubServiceId, setAssignSelectedSubServiceId] = useState('all');
   const [assignSelectedOperatorId, setAssignSelectedOperatorId] = useState('');
   const [assignAreaLabel, setAssignAreaLabel] = useState('');
   const [assignWardNo, setAssignWardNo] = useState('');
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
+  const [operatorDropdownOpen, setOperatorDropdownOpen] = useState(false);
+  const [operatorSearchQuery, setOperatorSearchQuery] = useState('');
+  const operatorDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Click outside to close operator custom dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (operatorDropdownRef.current && !operatorDropdownRef.current.contains(e.target as Node)) {
+        setOperatorDropdownOpen(false);
+      }
+    };
+    if (operatorDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [operatorDropdownOpen]);
 
   // ── Admin Price Approval Desk State ──
   const [activeMainTab, setActiveMainTab] = useState<'services' | 'price_requests'>('services');
@@ -254,17 +274,23 @@ export default function AdminServices() {
       }
 
       try {
-        const res = await apiClient.post('/operator-assignments', {
+        const payload: any = {
           operator_id: assignSelectedOperatorId,
           service_id: assignSelectedServiceId,
           area_label: mode === 'area_wise' ? assignAreaLabel.trim() : null,
           ward_no: mode === 'ward_wise' ? String(assignWardNo).trim() : null
-        });
+        };
+        if (assignSelectedSubServiceId && assignSelectedSubServiceId !== 'all') {
+          payload.sub_service_id = assignSelectedSubServiceId;
+        }
+
+        const res = await apiClient.post('/operator-assignments', payload);
         if (res.data.status !== 'success') {
           throw new Error(res.data.message || 'Failed to assign operator.');
         }
         setAssignSuccess(res.data.message || 'Operator successfully assigned to service!');
         setAssignSelectedServiceId('');
+        setAssignSelectedSubServiceId('all');
         setAssignSelectedOperatorId('');
         setAssignAreaLabel('');
         setAssignWardNo('');
@@ -275,6 +301,22 @@ export default function AdminServices() {
         throw err;
       }
     });
+  };
+
+  const handleDeleteAssignment = async (assignmentIds: string | string[]) => {
+    const idParam = Array.isArray(assignmentIds) ? assignmentIds.join(',') : assignmentIds;
+    if (!window.confirm('Kya aap is operator assignment ko remove karna chahte hain?')) return;
+    try {
+      const res = await apiClient.delete(`/operator-assignments/${idParam}`);
+      if (res.data.status === 'success') {
+        setAssignSuccess('Assignment successfully removed!');
+        await fetchAssignments();
+        setTimeout(() => setAssignSuccess(''), 4000);
+      }
+    } catch (err) {
+      setAssignError(errorText(err, 'Failed to remove assignment.'));
+      setTimeout(() => setAssignError(''), 4000);
+    }
   };
 
   const resetForm = () => {
@@ -603,7 +645,6 @@ export default function AdminServices() {
     const serviceData = {
       name: name.trim(),
       code: code.trim(),
-      category: 'Citizen Services',
       description: '',
       iconUrl,
       hasSubServices,
@@ -2593,6 +2634,7 @@ export default function AdminServices() {
                       value={assignSelectedServiceId}
                       onChange={e => {
                         setAssignSelectedServiceId(e.target.value);
+                        setAssignSelectedSubServiceId('all');
                         setAssignAreaLabel('');
                         setAssignWardNo('');
                       }}
@@ -2611,6 +2653,9 @@ export default function AdminServices() {
                   {/* Dynamic fields based on service routing mode */}
                   {assignSelectedServiceId && (() => {
                     const mode = getSelectedServiceMode();
+                    const selectedService = services.find(s => s.id === assignSelectedServiceId);
+                    const serviceSubServices = selectedService?.subServices || [];
+
                     return (
                       <div className="space-y-3 pt-1">
                         {/* Mode Info Banner */}
@@ -2621,6 +2666,30 @@ export default function AdminServices() {
                                 'Operator will handle requests for a specific Gwalior ward.'
                           }
                         </div>
+
+                        {/* Optional Sub-Service Selector if Service has Sub-Services */}
+                        {selectedService?.hasSubServices && serviceSubServices.length > 0 && (
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              Select Sub-Service (Optional)
+                            </label>
+                            <select
+                              value={assignSelectedSubServiceId}
+                              onChange={e => setAssignSelectedSubServiceId(e.target.value)}
+                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                            >
+                              <option value="all">-- All Sub-Services of {selectedService.name} (Default) --</option>
+                              {serviceSubServices.map(sub => (
+                                <option key={sub.id} value={sub.id}>
+                                  {sub.name} ({sub.code})
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-[10px] text-slate-400 mt-0.5 block">
+                              Agar aap poori service assign karna chahte hain to "All Sub-Services" select rehne dein.
+                            </span>
+                          </div>
+                        )}
 
                         {/* Area Input (for area_wise) */}
                         {mode === 'area_wise' && (
@@ -2664,29 +2733,278 @@ export default function AdminServices() {
                           </div>
                         )}
 
-                        {/* 2. Operator Dropdown */}
-                        <div>
+                        {/* 2. Operator Dropdown (Custom Searchable UI) */}
+                        <div className="relative" ref={operatorDropdownRef}>
                           <label className="block text-xs font-bold text-slate-700 mb-1">
                             Select Operator <span className="text-rose-500">*</span>
                           </label>
+
                           {!operatorsLoaded ? (
-                            <Skeleton className="h-9 w-full rounded-xl" />
+                            <Skeleton className="h-10 w-full rounded-xl" />
                           ) : (
-                          <select
-                            value={assignSelectedOperatorId}
-                            onChange={e => setAssignSelectedOperatorId(e.target.value)}
-                            className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                            required
-                          >
-                            <option value="">-- Choose Operator --</option>
-                            {allOperators.map((op: any) => (
-                              <option key={op.id} value={op.id}>
-                                {op.fullName} ({op.userCode}) — {op.mobile}
-                              </option>
-                            ))}
-                          </select>
+                            <div>
+                              {/* Trigger Button */}
+                              <button
+                                type="button"
+                                onClick={() => setOperatorDropdownOpen(prev => !prev)}
+                                className="w-full px-3 py-2.5 bg-white border border-slate-300 hover:border-indigo-400 rounded-xl text-xs text-left flex items-center justify-between gap-2 shadow-xs transition-colors cursor-pointer focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                              >
+                                {assignSelectedOperatorId ? (() => {
+                                  const selectedOp = allOperators.find(o => String(o.id) === String(assignSelectedOperatorId));
+                                  if (!selectedOp) return <span className="text-slate-400">-- Choose Operator --</span>;
+
+                                  const isAssignmentActive = (a: any) =>
+                                    a.isActive !== undefined ? Boolean(a.isActive) : (a.is_active === 1 || a.is_active === true || a.is_active === '1');
+                                  const getAssignmentOpId = (a: any) => String(a.operatorId || a.operator_id || '');
+                                  const getAssignmentSvcId = (a: any) => String(a.serviceId || a.service_id || '');
+                                  const getAssignmentWard = (a: any) => a.wardNo || a.ward_no || '';
+                                  const getAssignmentArea = (a: any) => a.areaLabel || a.area_label || '';
+
+                                  const opAssignments = allAssignments.filter(
+                                    (a: any) => getAssignmentOpId(a) === String(selectedOp.id) && isAssignmentActive(a)
+                                  );
+                                  const assignedToCurrentService = assignSelectedServiceId
+                                    ? opAssignments.filter((a: any) => getAssignmentSvcId(a) === String(assignSelectedServiceId))
+                                    : [];
+
+                                  const uniqueCurrentAssignedWards = Array.from(new Set(
+                                    assignedToCurrentService.map((a: any) => {
+                                      const w = getAssignmentWard(a);
+                                      const ar = getAssignmentArea(a);
+                                      return w ? `#${w}` : ar ? ar : 'Single';
+                                    }).filter(Boolean)
+                                  ));
+
+                                  return (
+                                    <div className="flex items-center justify-between w-full min-w-0 pr-1 gap-2">
+                                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <div className="h-6 w-6 rounded-lg bg-indigo-100 text-indigo-700 font-bold text-[11px] flex items-center justify-center shrink-0">
+                                          {selectedOp.fullName.charAt(0).toUpperCase()}
+                                        </div>
+                                        <span className="font-bold text-slate-800 truncate">{selectedOp.fullName}</span>
+                                        <span className="text-[10px] text-slate-400 font-mono shrink-0">({selectedOp.userCode})</span>
+                                        <span className="text-[11px] text-slate-500 font-mono hidden md:inline shrink-0">{selectedOp.mobile}</span>
+                                      </div>
+
+                                      <div className="shrink-0">
+                                        {uniqueCurrentAssignedWards.length > 0 ? (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 truncate max-w-[130px] sm:max-w-[200px] inline-block">
+                                            ⚠️ Assigned ({uniqueCurrentAssignedWards.length === 1 ? `Ward ${uniqueCurrentAssignedWards[0]}` : `${uniqueCurrentAssignedWards.length} Wards`})
+                                          </span>
+                                        ) : opAssignments.length > 0 ? (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                                            📌 Assigned
+                                          </span>
+                                        ) : (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                            ✅ Available
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })() : (
+                                  <span className="text-slate-400 font-medium">-- Choose Operator --</span>
+                                )}
+
+                                <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 ${operatorDropdownOpen ? 'rotate-180 text-indigo-600' : ''}`} />
+                              </button>
+
+                              {/* Dropdown Menu Popup (Responsive, No Overflow) */}
+                              {operatorDropdownOpen && (
+                                <div className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 space-y-2 animate-in fade-in zoom-in-95 duration-150 overflow-hidden max-w-full">
+                                  {/* Search Box */}
+                                  <div className="relative">
+                                    <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input
+                                      type="text"
+                                      placeholder="Search by name, code, or mobile..."
+                                      value={operatorSearchQuery}
+                                      onChange={e => setOperatorSearchQuery(e.target.value)}
+                                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                                      autoFocus
+                                    />
+                                  </div>
+
+                                  {/* Operator List */}
+                                  <div className="max-h-56 overflow-y-auto overflow-x-hidden space-y-1 pr-1">
+                                    {allOperators
+                                      .filter(op => {
+                                        const q = operatorSearchQuery.toLowerCase();
+                                        return (
+                                          (op.fullName || '').toLowerCase().includes(q) ||
+                                          (op.userCode || '').toLowerCase().includes(q) ||
+                                          (op.mobile || '').includes(q)
+                                        );
+                                      })
+                                      .map((op: any) => {
+                                        const isAssignmentActive = (a: any) =>
+                                          a.isActive !== undefined ? Boolean(a.isActive) : (a.is_active === 1 || a.is_active === true || a.is_active === '1');
+                                        const getAssignmentOpId = (a: any) => String(a.operatorId || a.operator_id || '');
+                                        const getAssignmentSvcId = (a: any) => String(a.serviceId || a.service_id || '');
+                                        const getAssignmentWard = (a: any) => a.wardNo || a.ward_no || '';
+                                        const getAssignmentArea = (a: any) => a.areaLabel || a.area_label || '';
+
+                                        const opAssignments = allAssignments.filter(
+                                          (a: any) => getAssignmentOpId(a) === String(op.id) && isAssignmentActive(a)
+                                        );
+                                        const assignedToCurrentService = assignSelectedServiceId
+                                          ? opAssignments.filter((a: any) => getAssignmentSvcId(a) === String(assignSelectedServiceId))
+                                          : [];
+
+                                        const uniqueWards = Array.from(new Set(
+                                          assignedToCurrentService.map((a: any) => {
+                                            const w = getAssignmentWard(a);
+                                            const ar = getAssignmentArea(a);
+                                            return w ? `#${w}` : ar ? ar : 'Single';
+                                          }).filter(Boolean)
+                                        ));
+
+                                        const isSelected = String(op.id) === String(assignSelectedOperatorId);
+
+                                        return (
+                                          <div
+                                            key={op.id}
+                                            onClick={() => {
+                                              setAssignSelectedOperatorId(String(op.id));
+                                              setOperatorDropdownOpen(false);
+                                              setOperatorSearchQuery('');
+                                            }}
+                                            className={`p-2.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs cursor-pointer transition-all ${
+                                              isSelected
+                                                ? 'bg-indigo-50/90 border-indigo-300 shadow-xs'
+                                                : 'border-transparent hover:bg-slate-50 hover:border-slate-200'
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                              <div className={`h-7 w-7 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${
+                                                isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700'
+                                              }`}>
+                                                {op.fullName.charAt(0).toUpperCase()}
+                                              </div>
+                                              <div className="min-w-0">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                  <span className="font-bold text-slate-900">{op.fullName}</span>
+                                                  <span className="text-[10px] text-slate-400 font-mono">({op.userCode})</span>
+                                                </div>
+                                                <span className="text-[11px] text-slate-500 font-mono block">{op.mobile}</span>
+                                              </div>
+                                            </div>
+
+                                            <div className="shrink-0 self-start sm:self-auto max-w-full">
+                                              {uniqueWards.length > 0 ? (
+                                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 truncate max-w-[240px] inline-block">
+                                                  ⚠️ {uniqueWards.length === 1 ? `Ward ${uniqueWards[0]}` : uniqueWards.length === 2 ? `Ward ${uniqueWards.join(', ')}` : `Assigned in ${uniqueWards.length} Wards`}
+                                                </span>
+                                              ) : opAssignments.length > 0 ? (
+                                                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200 truncate max-w-[180px] inline-block">
+                                                  📌 {Array.from(new Set(opAssignments.map((a: any) => a.serviceName || a.subServiceName))).slice(0, 1).join(', ')}
+                                                  {opAssignments.length > 1 ? ` +${opAssignments.length - 1}` : ''}
+                                                </span>
+                                              ) : (
+                                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                  ✅ Available
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
+
+                        {/* Selected Operator Detailed Assignment Status */}
+                        {assignSelectedOperatorId && (() => {
+                          const isAssignmentActive = (a: any) =>
+                            a.isActive !== undefined ? Boolean(a.isActive) : (a.is_active === 1 || a.is_active === true || a.is_active === '1');
+                          const getAssignmentOpId = (a: any) => String(a.operatorId || a.operator_id || '');
+                          const getAssignmentSvcId = (a: any) => String(a.serviceId || a.service_id || '');
+                          const getAssignmentWard = (a: any) => a.wardNo || a.ward_no || '';
+                          const getAssignmentArea = (a: any) => a.areaLabel || a.area_label || '';
+
+                          const selectedOp = allOperators.find(o => String(o.id) === String(assignSelectedOperatorId));
+                          const opAssignments = allAssignments.filter(
+                            (a: any) => getAssignmentOpId(a) === String(assignSelectedOperatorId) && isAssignmentActive(a)
+                          );
+                          const assignedToCurrentService = assignSelectedServiceId
+                            ? opAssignments.filter((a: any) => getAssignmentSvcId(a) === String(assignSelectedServiceId))
+                            : [];
+
+                          const uniqueCurrentAssigned = Array.from(new Set(
+                            assignedToCurrentService.map((a: any) => {
+                              const w = getAssignmentWard(a);
+                              const ar = getAssignmentArea(a);
+                              return w ? `Ward No: #${w}` : ar ? `Office/Area: ${ar}` : 'Single Operator Mode';
+                            })
+                          ));
+
+                          const groupedOpAssignments = Array.from(new Set(
+                            opAssignments.map((a: any) => {
+                              const sName = a.serviceName || a.subServiceName;
+                              const w = getAssignmentWard(a);
+                              const ar = getAssignmentArea(a);
+                              const loc = w ? ` (Ward #${w})` : ar ? ` (${ar})` : '';
+                              return `${sName}${loc}`;
+                            })
+                          ));
+
+                          return (
+                            <div className="p-3 bg-white rounded-xl border border-indigo-200 shadow-xs space-y-2 text-xs">
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                                  <UserCheck className="h-4 w-4 text-indigo-600" />
+                                  <span>{selectedOp?.fullName} ({selectedOp?.userCode})</span>
+                                </div>
+                                <span className="text-slate-500 font-mono text-[11px]">{selectedOp?.mobile}</span>
+                              </div>
+
+                              {uniqueCurrentAssigned.length > 0 ? (
+                                <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-amber-900 text-[11px]">
+                                  <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                                    <span>Yeh operator abhi is selected service ke liye already assigned hai:</span>
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {uniqueCurrentAssigned.map((label, idx) => (
+                                      <span key={idx} className="bg-amber-200 text-amber-900 px-2 py-0.5 rounded text-[10px] font-bold">
+                                        {label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 font-medium flex items-center gap-1.5">
+                                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                                  <span>Yeh operator is service par abhi assign nahi hai. Aap assign kar sakte hain.</span>
+                                </div>
+                              )}
+
+                              <div>
+                                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1">
+                                  Is Operator ke Total Active Assignments ({groupedOpAssignments.length}):
+                                </span>
+                                {groupedOpAssignments.length === 0 ? (
+                                  <span className="text-slate-400 italic text-[11px]">Koi bhi active service assignment nahi hai (Bilkul Free).</span>
+                                ) : (
+                                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pt-1">
+                                    {groupedOpAssignments.map((label, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 bg-slate-100 text-slate-700 border border-slate-200"
+                                      >
+                                        <span>{label}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
@@ -2704,6 +3022,153 @@ export default function AdminServices() {
                     <span>Assign Operator to Service</span>
                   </ActionButton>
                 </form>
+
+                {/* ── CURRENT ASSIGNMENTS TABLE / LIST (Grouped Cleanly — No Duplicates) ── */}
+                <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
+                  {(() => {
+                    const isAssignmentActive = (a: any) =>
+                      a.isActive !== undefined ? Boolean(a.isActive) : (a.is_active === 1 || a.is_active === true || a.is_active === '1');
+                    const getAssignmentSvcId = (a: any) => String(a.serviceId || a.service_id || '');
+
+                    const rawFiltered = assignSelectedServiceId
+                      ? allAssignments.filter((a: any) => getAssignmentSvcId(a) === String(assignSelectedServiceId) && isAssignmentActive(a))
+                      : allAssignments.filter((a: any) => isAssignmentActive(a));
+
+                    // Group assignments by: operatorId + serviceId + wardNo + areaLabel
+                    const groupedMap = new Map<string, {
+                      key: string;
+                      ids: string[];
+                      operatorName: string;
+                      operatorMobile?: string;
+                      serviceName: string;
+                      wardNo?: string;
+                      areaLabel?: string;
+                      subServiceNames: string[];
+                    }>();
+
+                    for (const a of rawFiltered) {
+                      const opId = String(a.operatorId || a.operator_id || '');
+                      const sId = String(a.serviceId || a.service_id || '');
+                      const ward = String(a.wardNo || a.ward_no || '').trim();
+                      const area = String(a.areaLabel || a.area_label || '').trim();
+                      const key = `${opId}_${sId}_${ward}_${area}`;
+
+                      const subName = a.subServiceName && a.subServiceName.toLowerCase() !== (a.serviceName || '').toLowerCase()
+                        ? a.subServiceName
+                        : '';
+
+                      if (!groupedMap.has(key)) {
+                        groupedMap.set(key, {
+                          key,
+                          ids: [String(a.id)],
+                          operatorName: a.operatorName || 'Unknown Operator',
+                          operatorMobile: a.operatorMobile,
+                          serviceName: a.serviceName || a.subServiceName || 'Service',
+                          wardNo: ward,
+                          areaLabel: area,
+                          subServiceNames: subName ? [subName] : []
+                        });
+                      } else {
+                        const existing = groupedMap.get(key)!;
+                        existing.ids.push(String(a.id));
+                        if (subName && !existing.subServiceNames.includes(subName)) {
+                          existing.subServiceNames.push(subName);
+                        }
+                      }
+                    }
+
+                    const groupedList = Array.from(groupedMap.values());
+
+                    return (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                            <UserCheck className="h-4 w-4 text-indigo-600" />
+                            <span>
+                              {assignSelectedServiceId
+                                ? `Currently Assigned Operators for this Service (${groupedList.length})`
+                                : `All Active Operator Assignments (${groupedList.length})`}
+                            </span>
+                          </h4>
+                          {assignmentsLoaded && (
+                            <span className="text-[10px] text-slate-400">
+                              {groupedList.length} total active assignments
+                            </span>
+                          )}
+                        </div>
+
+                        {!assignmentsLoaded ? (
+                          <Skeleton className="h-20 w-full rounded-xl" />
+                        ) : groupedList.length === 0 ? (
+                          <div className="p-4 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-center text-slate-500 text-xs">
+                            {assignSelectedServiceId
+                              ? 'Is service par abhi tak koi operator assign nahi hai.'
+                              : 'System me abhi tak koi active operator assignment nahi hai.'}
+                          </div>
+                        ) : (
+                          <div className="max-h-60 overflow-y-auto space-y-1.5 border border-slate-200 rounded-xl p-2 bg-white">
+                            {groupedList.map((item) => {
+                              return (
+                                <div
+                                  key={item.key}
+                                  className="p-2.5 rounded-lg border border-slate-100 hover:border-indigo-200 bg-slate-50/60 flex items-center justify-between gap-3 text-xs transition-colors"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-slate-800 truncate">
+                                        {item.operatorName}
+                                      </span>
+                                      {item.operatorMobile && (
+                                        <span className="text-[11px] text-slate-500 font-mono">
+                                          {item.operatorMobile}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-slate-600 mt-1 flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-indigo-700">
+                                        {item.serviceName}
+                                      </span>
+                                      {item.wardNo && (
+                                        <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                          Ward: #{item.wardNo}
+                                        </span>
+                                      )}
+                                      {item.areaLabel && (
+                                        <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                          Area: {item.areaLabel}
+                                        </span>
+                                      )}
+                                      {!item.wardNo && !item.areaLabel && (
+                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                          Whole Gwalior (Single)
+                                        </span>
+                                      )}
+
+                                      {/* Sub-services badge */}
+                                      {item.subServiceNames.length > 0 && (
+                                        <span className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-medium px-1.5 py-0.5 rounded">
+                                          Sub-services: {item.subServiceNames.join(', ')}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteAssignment(item.ids)}
+                                    title="Remove assignment"
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
 
 
               </div>

@@ -65,11 +65,11 @@ export default function DistributorDashboard() {
           </div>
 
           <Link
-            to="/distributor/shop-list"
+            to="/distributor/verify-shops"
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2"
           >
             <Store className="h-4 w-4" />
-            <span>View Shop List</span>
+            <span>My Shops & Registrations</span>
           </Link>
         </div>
 
@@ -132,28 +132,15 @@ export default function DistributorDashboard() {
           
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Link
-              to="/distributor/shop-list"
+              to="/distributor/verify-shops"
               className="p-4 bg-blue-50/60 hover:bg-blue-100/70 border border-blue-200/80 rounded-xl flex flex-col items-center text-center gap-2 group transition-all"
             >
               <div className="h-10 w-10 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
                 <Store className="h-5 w-5" />
               </div>
               <div>
-                <span className="text-xs font-bold text-slate-800 block">Shop List</span>
-                <span className="text-[10px] text-slate-500 font-medium">View & Add Shops</span>
-              </div>
-            </Link>
-
-            <Link
-              to="/distributor/verify-shops"
-              className="p-4 bg-amber-50/60 hover:bg-amber-100/70 border border-amber-200/80 rounded-xl flex flex-col items-center text-center gap-2 group transition-all"
-            >
-              <div className="h-10 w-10 rounded-full bg-amber-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
-                <UserCheck className="h-5 w-5" />
-              </div>
-              <div>
-                <span className="text-xs font-bold text-slate-800 block">Verify Shops</span>
-                <span className="text-[10px] text-slate-500 font-medium">Pending Approvals</span>
+                <span className="text-xs font-bold text-slate-800 block">My Network Shops</span>
+                <span className="text-[10px] text-slate-500 font-medium">Add & Track Status</span>
               </div>
             </Link>
 
@@ -167,6 +154,19 @@ export default function DistributorDashboard() {
               <div>
                 <span className="text-xs font-bold text-slate-800 block">Delete Requests</span>
                 <span className="text-[10px] text-slate-500 font-medium">Request Shop Removal</span>
+              </div>
+            </Link>
+
+            <Link
+              to="/distributor/complaint"
+              className="p-4 bg-amber-50/60 hover:bg-amber-100/70 border border-amber-200/80 rounded-xl flex flex-col items-center text-center gap-2 group transition-all"
+            >
+              <div className="h-10 w-10 rounded-full bg-amber-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                <Phone className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">Complaints & Help</span>
+                <span className="text-[10px] text-slate-500 font-medium">Support Tickets</span>
               </div>
             </Link>
 
@@ -267,8 +267,8 @@ export default function DistributorDashboard() {
 
           <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
             <span>Showing {filteredShops.length} shops</span>
-            <Link to="/distributor/shop-list" className="text-blue-600 font-bold hover:underline flex items-center gap-1">
-              <span>View Full Shop List</span>
+            <Link to="/distributor/verify-shops" className="text-blue-600 font-bold hover:underline flex items-center gap-1">
+              <span>View All Network Shops</span>
               <ArrowUpRight className="h-3.5 w-3.5" />
             </Link>
           </div>

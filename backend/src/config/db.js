@@ -37,22 +37,31 @@ export const pool = mysql.createPool(dbConfig);
 export const initDb = async () => {
   try {
     // 1. Check/Connect Database on MySQL server
-    const rawConn = await mysql.createConnection({
-      host: dbConfig.host,
-      port: dbConfig.port,
-      user: dbConfig.user,
-      password: dbConfig.password,
-      database: dbConfig.database,
-      ssl: sslConfig,
-      multipleStatements: true
-    });
-
+    let rawConn;
     try {
+      rawConn = await mysql.createConnection({
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        database: dbConfig.database,
+        ssl: sslConfig,
+        multipleStatements: true
+      });
+    } catch (connErr) {
+      // If database does not exist yet, connect to server and create it
+      rawConn = await mysql.createConnection({
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        ssl: sslConfig,
+        multipleStatements: true
+      });
       await rawConn.query(
         `CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
       );
-    } catch (e) {
-      // Ignore if cloud DB user does not have global CREATE DATABASE privilege
+      await rawConn.query(`USE \`${dbConfig.database}\`;`);
     }
 
     // 2. Execute schema.sql if tables don't exist
