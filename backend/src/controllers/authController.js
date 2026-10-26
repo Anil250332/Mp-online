@@ -79,6 +79,7 @@ export const requestRegistrationOtp = async (req, res) => {
       userData: {
         full_name,
         mobile,
+       
         role,
         email: email || null,
         shop_name: role === 'agent' ? shop_name : (office_name || shop_name || null),
@@ -90,11 +91,22 @@ export const requestRegistrationOtp = async (req, res) => {
       }
     });
 
-    // Dispatch OTP via Email Notification module asynchronously (non-blocking)
-    if (email) {
-      sendOtpEmail(email, otp, full_name)
-        .then(sent => console.log(`📧 [Auth] OTP email dispatch to ${email} status: ${sent}`))
-        .catch(err => console.error('❌ [Auth] Email OTP dispatch error:', err.message));
+    // Dispatch OTP via Resend Email Notification module
+    const emailResult = await sendOtpEmail(email, otp, full_name);
+
+    if (!emailResult || !emailResult.success) {
+      // Clean up in-memory entry so user isn't stuck with an unreachable session
+      otpStore.delete(mobile);
+
+      const isDomainRestriction = emailResult?.error?.includes('testing emails to your own email address');
+      const clientMessage = isDomainRestriction
+        ? 'Email send failed: Resend unverified domain limitation (Testing ke liye Resend registered email use karein ya resend.com par domain verify karein).'
+        : (emailResult?.error || 'Email par OTP deliver nahi ho paya. Kripya apna email check karein ya thodi der baad dobara koshish karein.');
+
+      return res.status(500).json({
+        status: 'error',
+        message: clientMessage
+      });
     }
 
     return res.status(200).json({
@@ -501,10 +513,22 @@ export const requestForgotPasswordOtp = async (req, res) => {
       userName: user.full_name
     });
 
-    // Send OTP via Nodemailer Email helper asynchronously (non-blocking)
-    sendPasswordResetOtpEmail(user.email, otp, user.full_name)
-      .then(sent => console.log(`📧 [Auth] Password reset OTP dispatch to ${user.email} status: ${sent}`))
-      .catch(err => console.error('❌ [Auth] Password reset OTP email dispatch error:', err.message));
+    // Send OTP via Resend Email helper
+    const emailResult = await sendPasswordResetOtpEmail(user.email, otp, user.full_name);
+
+    if (!emailResult || !emailResult.success) {
+      passwordResetOtpStore.delete(cleanEmail);
+
+      const isDomainRestriction = emailResult?.error?.includes('testing emails to your own email address');
+      const clientMessage = isDomainRestriction
+        ? 'Email send failed: Resend unverified domain limitation (Testing ke liye Resend registered email use karein ya resend.com par domain verify karein).'
+        : (emailResult?.error || 'Password reset OTP email par bhej nahi sake. Kripya thodi der baad dobara koshish karein.');
+
+      return res.status(500).json({
+        status: 'error',
+        message: clientMessage
+      });
+    }
 
     return res.status(200).json({
       status: 'success',
